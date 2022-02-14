@@ -1,0 +1,3 @@
+```release-note:feature
+**Elasticsearch Database UI**: The UI now supports adding and editing Elasticsearch connections in the database secret engine.
+```

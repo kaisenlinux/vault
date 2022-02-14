@@ -1,0 +1,3 @@
+```release-note:feature
+**Oracle Database UI**: The UI now supports adding and editing Oracle connections in the database secret engine.
+```

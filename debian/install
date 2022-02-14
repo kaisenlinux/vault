@@ -1,0 +1,3 @@
+dist/vault usr/bin
+debian/etc/* etc/
+debian/vault.png usr/share/pixmaps

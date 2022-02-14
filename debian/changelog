@@ -1,0 +1,5 @@
+vault (1.9.3-1kaisen) kaisen-packages; urgency=medium
+
+  * First packaging for Kaisen Linux
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sun, 13 Feb 2022 21:50:26 +0100

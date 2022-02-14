@@ -1,0 +1,3 @@
+```release-note:feature
+**Postgres Database UI**: The UI now supports adding and editing Postgres connections in the database secret engine.
+```
