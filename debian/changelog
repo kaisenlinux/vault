@@ -1,3 +1,10 @@
+vault (1.9.4-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 1.9.4 version
+  * Update vault logo
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Sun, 06 Mar 2022 17:27:29 +0100
+
 vault (1.9.3-1kaisen) kaisen-packages; urgency=medium
 
   * First packaging for Kaisen Linux
