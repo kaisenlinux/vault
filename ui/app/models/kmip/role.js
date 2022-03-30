@@ -5,26 +5,26 @@ import apiPath from 'vault/utils/api-path';
 import attachCapabilities from 'vault/lib/attach-capabilities';
 
 export const COMPUTEDS = {
-  operationFields: computed('newFields', function() {
-    return this.newFields.filter(key => key.startsWith('operation'));
+  operationFields: computed('newFields', function () {
+    return this.newFields.filter((key) => key.startsWith('operation'));
   }),
 
-  operationFieldsWithoutSpecial: computed('operationFields', function() {
+  operationFieldsWithoutSpecial: computed('operationFields', function () {
     return this.operationFields.slice().removeObjects(['operationAll', 'operationNone']);
   }),
 
-  tlsFields: computed(function() {
+  tlsFields: computed(function () {
     return ['tlsClientKeyBits', 'tlsClientKeyType', 'tlsClientTtl'];
   }),
 
   // For rendering on the create/edit pages
-  defaultFields: computed('newFields', 'operationFields', 'tlsFields', function() {
+  defaultFields: computed('newFields', 'operationFields', 'tlsFields', function () {
     let excludeFields = ['role'].concat(this.operationFields, this.tlsFields);
     return this.newFields.slice().removeObjects(excludeFields);
   }),
 
   // For adapter/serializer
-  nonOperationFields: computed('newFields', 'operationFields', function() {
+  nonOperationFields: computed('newFields', 'operationFields', function () {
     return this.newFields.slice().removeObjects(this.operationFields);
   }),
 };
@@ -37,7 +37,7 @@ const ModelExport = Model.extend(COMPUTEDS, {
   getHelpUrl(path) {
     return `/v1/${path}/scope/example/role/example?help=1`;
   },
-  fieldGroups: computed('fields', 'defaultFields.length', 'tlsFields', function() {
+  fieldGroups: computed('fields', 'defaultFields.length', 'tlsFields', function () {
     const groups = [{ TLS: this.tlsFields }];
     if (this.defaultFields.length) {
       groups.unshift({ default: this.defaultFields });
@@ -46,7 +46,7 @@ const ModelExport = Model.extend(COMPUTEDS, {
     return ret;
   }),
 
-  operationFormFields: computed('operationFieldsWithoutSpecial', function() {
+  operationFormFields: computed('operationFieldsWithoutSpecial', function () {
     let objects = [
       'operationCreate',
       'operationActivate',
@@ -72,10 +72,10 @@ const ModelExport = Model.extend(COMPUTEDS, {
     }
     return fieldToAttrs(this, groups);
   }),
-  tlsFormFields: computed('tlsFields', function() {
+  tlsFormFields: computed('tlsFields', function () {
     return expandAttributeMeta(this, this.tlsFields);
   }),
-  fields: computed('defaultFields', function() {
+  fields: computed('defaultFields', function () {
     return expandAttributeMeta(this, this.defaultFields);
   }),
 });

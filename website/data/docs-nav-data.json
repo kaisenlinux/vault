@@ -190,6 +190,10 @@
       {
         "title": "Transform",
         "path": "concepts/transform"
+      },
+      {
+        "title": "Mount Migration",
+        "path": "concepts/mount-migration"
       }
     ]
   },
@@ -385,8 +389,16 @@
         "path": "configuration/ui"
       },
       {
+        "title": "<code>Log Completed Requests</code>",
+        "path": "configuration/log-requests-level"
+      },
+      {
         "title": "<code>Entropy Augmentation</code> <sup>ENT</sup>",
         "path": "configuration/entropy-augmentation"
+      },
+      {
+        "title": "<code>kms_library</code> <sup>ENT</sup>",
+        "path": "configuration/kms-library"
       }
     ]
   },
@@ -444,6 +456,10 @@
           {
             "title": "<code>list</code>",
             "path": "commands/auth/list"
+          },
+          {
+            "title": "<code>move</code>",
+            "path": "commands/auth/move"
           },
           {
             "title": "<code>tune</code>",
@@ -584,6 +600,10 @@
           {
             "title": "<code>key-status</code>",
             "path": "commands/operator/key-status"
+          },
+          {
+            "title": "<code>members</code>",
+            "path": "commands/operator/members"
           },
           {
             "title": "<code>migrate</code>",
@@ -762,6 +782,10 @@
       {
         "title": "<code>version</code>",
         "path": "commands/version"
+      },
+      {
+        "title": "<code>version-history</code>",
+        "path": "commands/version-history"
       },
       {
         "title": "<code>write</code>",
@@ -1282,6 +1306,11 @@
             "path": "platform/k8s"
           },
           {
+            "title": "Agent Injector vs. Vault CSI Provider",
+            "path": "platform/k8s/injector-csi"
+          },
+
+          {
             "title": "Helm Chart",
             "routes": [
               {
@@ -1477,6 +1506,10 @@
       {
         "title": "Upgrade Plugins",
         "path": "upgrading/plugins"
+      },
+      {
+        "title": "Upgrade to 1.10.x",
+        "path": "upgrading/upgrade-to-1.10.x"
       },
       {
         "title": "Upgrade to 1.9.x",
@@ -1832,6 +1865,10 @@
       {
         "title": "Control Groups",
         "path": "enterprise/control-groups"
+      },
+      {
+        "title": "Managed Keys",
+        "path": "enterprise/managed-keys"
       },
       {
         "title": "MFA",

@@ -367,14 +367,10 @@ func NewRaftBackend(conf map[string]string, logger log.Logger) (physical.Backend
 
 		// Create the backend raft store for logs and stable storage.
 		dbPath := filepath.Join(path, "raft.db")
-		freelistType, noFreelistSync := freelistOptions()
+		opts := boltOptions(dbPath)
 		raftOptions := raftboltdb.Options{
-			Path: dbPath,
-			BoltOptions: &bolt.Options{
-				FreelistType:   freelistType,
-				NoFreelistSync: noFreelistSync,
-				MmapFlags:      getMmapFlags(dbPath),
-			},
+			Path:        dbPath,
+			BoltOptions: opts,
 		}
 		store, err := raftboltdb.New(raftOptions)
 		if err != nil {
@@ -1151,7 +1147,7 @@ func (b *RaftBackend) SnapshotHTTP(out *logical.HTTPResponseWriter, access *seal
 
 // Snapshot takes a raft snapshot, packages it into a archive file and writes it
 // to the provided writer. Seal access is used to encrypt the SHASUM file so we
-// can validate the snapshot was taken using the same master keys or not.
+// can validate the snapshot was taken using the same root keys or not.
 func (b *RaftBackend) Snapshot(out io.Writer, access *seal.Access) error {
 	b.l.RLock()
 	defer b.l.RUnlock()
@@ -1174,7 +1170,7 @@ func (b *RaftBackend) Snapshot(out io.Writer, access *seal.Access) error {
 // WriteSnapshotToTemp reads a snapshot archive off the provided reader,
 // extracts the data and writes the snapshot to a temporary file. The seal
 // access is used to decrypt the SHASUM file in the archive to ensure this
-// snapshot has the same master key as the running instance. If the provided
+// snapshot has the same root key as the running instance. If the provided
 // access is nil then it will skip that validation.
 func (b *RaftBackend) WriteSnapshotToTemp(in io.ReadCloser, access *seal.Access) (*os.File, func(), raft.SnapshotMeta, error) {
 	b.l.RLock()
@@ -1654,20 +1650,40 @@ func (s sealer) Open(ctx context.Context, ct []byte) ([]byte, error) {
 	return s.access.Decrypt(ctx, &eblob, nil)
 }
 
-// freelistOptions returns the freelist type and nofreelistsync values to use
-// when opening boltdb files, based on our preferred defaults, and the possible
-// presence of overriding environment variables.
-func freelistOptions() (bolt.FreelistType, bool) {
-	freelistType := bolt.FreelistMapType
-	noFreelistSync := true
+// boltOptions returns a bolt.Options struct, suitable for passing to
+// bolt.Open(), pre-configured with all of our preferred defaults.
+func boltOptions(path string) *bolt.Options {
+	o := &bolt.Options{
+		Timeout:        1 * time.Second,
+		FreelistType:   bolt.FreelistMapType,
+		NoFreelistSync: true,
+		MmapFlags:      getMmapFlags(path),
+	}
 
 	if os.Getenv("VAULT_RAFT_FREELIST_TYPE") == "array" {
-		freelistType = bolt.FreelistArrayType
+		o.FreelistType = bolt.FreelistArrayType
 	}
 
 	if os.Getenv("VAULT_RAFT_FREELIST_SYNC") != "" {
-		noFreelistSync = false
+		o.NoFreelistSync = false
 	}
 
-	return freelistType, noFreelistSync
+	// By default, we want to set InitialMmapSize to 100GB, but only on 64bit platforms.
+	// Otherwise, we set it to whatever the value of VAULT_RAFT_INITIAL_MMAP_SIZE
+	// is, assuming it can be parsed as an int. Bolt itself sets this to 0 by default,
+	// so if users are wanting to turn this off, they can also set it to 0. Setting it
+	// to a negative value is the same as not setting it at all.
+	if os.Getenv("VAULT_RAFT_INITIAL_MMAP_SIZE") == "" {
+		o.InitialMmapSize = initialMmapSize
+	} else {
+		imms, err := strconv.Atoi(os.Getenv("VAULT_RAFT_INITIAL_MMAP_SIZE"))
+
+		// If there's an error here, it means they passed something that's not convertible to
+		// a number. Rather than fail startup, just ignore it.
+		if err == nil && imms > 0 {
+			o.InitialMmapSize = imms
+		}
+	}
+
+	return o
 }

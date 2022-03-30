@@ -1,3 +1,9 @@
+vault (1.10.0-1kaisen) kaisen-packages; urgency=medium
+
+  * Import 1.10.0 release
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Wed, 30 Mar 2022 02:00:04 +0100
+
 vault (1.9.4-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.9.4 version

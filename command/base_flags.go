@@ -247,7 +247,7 @@ func (i *intValue) Set(s string) error {
 	if err != nil {
 		return err
 	}
-	if v >= int64(math.MinInt) && v <= int64(math.MaxInt) {
+	if v >= math.MinInt && v <= math.MaxInt {
 		*i.target = int(v)
 		return nil
 	}
@@ -377,7 +377,7 @@ func (i *uintValue) Set(s string) error {
 	if err != nil {
 		return err
 	}
-	if v >= 0 && v <= uint64(math.MaxUint) {
+	if v >= 0 && v <= math.MaxUint {
 		*i.target = uint(v)
 		return nil
 	}

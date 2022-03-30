@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/armon/go-metrics"
 	"github.com/fatih/structs"
 	"github.com/go-test/deep"
 	"github.com/hashicorp/go-secure-stdlib/strutil"
@@ -44,11 +46,7 @@ import (
 	"golang.org/x/net/idna"
 )
 
-var (
-	stepCount               = 0
-	serialUnderTest         string
-	parsedKeyUsageUnderTest int
-)
+var stepCount = 0
 
 func TestPKI_RequireCN(t *testing.T) {
 	coreConfig := &vault.CoreConfig{
@@ -144,6 +142,135 @@ func TestPKI_RequireCN(t *testing.T) {
 
 	if resp.Data["certificate"] == "" {
 		t.Fatalf("expected a cert to be generated")
+	}
+}
+
+func TestPKI_DeviceCert(t *testing.T) {
+	coreConfig := &vault.CoreConfig{
+		LogicalBackends: map[string]logical.Factory{
+			"pki": Factory,
+		},
+	}
+	cluster := vault.NewTestCluster(t, coreConfig, &vault.TestClusterOptions{
+		HandlerFunc: vaulthttp.Handler,
+	})
+	cluster.Start()
+	defer cluster.Cleanup()
+
+	client := cluster.Cores[0].Client
+	var err error
+	err = client.Sys().Mount("pki", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "32h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.Logical().Write("pki/root/generate/internal", map[string]interface{}{
+		"common_name": "myvault.com",
+		"not_after":   "9999-12-31T23:59:59Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected ca info")
+	}
+	var certBundle certutil.CertBundle
+	err = mapstructure.Decode(resp.Data, &certBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsedCertBundle, err := certBundle.ToParsedCertBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := parsedCertBundle.Certificate
+	notAfter := cert.NotAfter.Format(time.RFC3339)
+	if notAfter != "9999-12-31T23:59:59Z" {
+		t.Fatal(fmt.Errorf("not after from certificate  is not matching with input parameter"))
+	}
+
+	// Create a role which does require CN (default)
+	_, err = client.Logical().Write("pki/roles/example", map[string]interface{}{
+		"allowed_domains":    "foobar.com,zipzap.com,abc.com,xyz.com",
+		"allow_bare_domains": true,
+		"allow_subdomains":   true,
+		"not_after":          "9999-12-31T23:59:59Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue a cert with require_cn set to true and with common name supplied.
+	// It should succeed.
+	resp, err = client.Logical().Write("pki/issue/example", map[string]interface{}{
+		"common_name": "foobar.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = mapstructure.Decode(resp.Data, &certBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsedCertBundle, err = certBundle.ToParsedCertBundle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert = parsedCertBundle.Certificate
+	notAfter = cert.NotAfter.Format(time.RFC3339)
+	if notAfter != "9999-12-31T23:59:59Z" {
+		t.Fatal(fmt.Errorf("not after from certificate  is not matching with input parameter"))
+	}
+}
+
+func TestBackend_InvalidParameter(t *testing.T) {
+	coreConfig := &vault.CoreConfig{
+		LogicalBackends: map[string]logical.Factory{
+			"pki": Factory,
+		},
+	}
+	cluster := vault.NewTestCluster(t, coreConfig, &vault.TestClusterOptions{
+		HandlerFunc: vaulthttp.Handler,
+	})
+	cluster.Start()
+	defer cluster.Cleanup()
+
+	client := cluster.Cores[0].Client
+	var err error
+	err = client.Sys().Mount("pki", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "32h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Logical().Write("pki/root/generate/internal", map[string]interface{}{
+		"common_name": "myvault.com",
+		"not_after":   "9999-12-31T23:59:59Z",
+		"ttl":         "25h",
+	})
+	if err == nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.Logical().Write("pki/root/generate/internal", map[string]interface{}{
+		"common_name": "myvault.com",
+		"not_after":   "9999-12-31T23:59:59",
+	})
+	if err == nil {
+		t.Fatal(err)
 	}
 }
 
@@ -696,7 +823,6 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 		KeyType:                   "rsa",
 		KeyBits:                   2048,
 		RequireCN:                 true,
-		SignatureBits:             256,
 		AllowWildcardCertificates: new(bool),
 	}
 	*roleVals.AllowWildcardCertificates = true
@@ -1056,21 +1182,21 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 	}
 
 	getRandCsr := func(keyType string, errorOk bool, csrTemplate *x509.CertificateRequest) csrPlan {
-		rsaKeyBits := []int{2048, 4096}
+		rsaKeyBits := []int{2048, 3072, 4096}
 		ecKeyBits := []int{224, 256, 384, 521}
 		plan := csrPlan{errorOk: errorOk}
 
 		var testBitSize int
 		switch keyType {
 		case "rsa":
-			plan.roleKeyBits = rsaKeyBits[mathRand.Int()%2]
+			plan.roleKeyBits = rsaKeyBits[mathRand.Int()%len(rsaKeyBits)]
 			testBitSize = plan.roleKeyBits
 
 			// If we don't expect an error already, randomly choose a
 			// key size and expect an error if it's less than the role
 			// setting
 			if !keybitSizeRandOff && !errorOk {
-				testBitSize = rsaKeyBits[mathRand.Int()%2]
+				testBitSize = rsaKeyBits[mathRand.Int()%len(rsaKeyBits)]
 			}
 
 			if testBitSize < plan.roleKeyBits {
@@ -1078,14 +1204,14 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 			}
 
 		case "ec":
-			plan.roleKeyBits = ecKeyBits[mathRand.Int()%4]
+			plan.roleKeyBits = ecKeyBits[mathRand.Int()%len(ecKeyBits)]
 			testBitSize = plan.roleKeyBits
 
 			// If we don't expect an error already, randomly choose a
 			// key size and expect an error if it's less than the role
 			// setting
 			if !keybitSizeRandOff && !errorOk {
-				testBitSize = ecKeyBits[mathRand.Int()%4]
+				testBitSize = ecKeyBits[mathRand.Int()%len(ecKeyBits)]
 			}
 
 			if testBitSize < plan.roleKeyBits {
@@ -1173,7 +1299,6 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 			if parsedKeyUsage == 0 && len(usage) != 0 {
 				panic("parsed key usages was zero")
 			}
-			parsedKeyUsageUnderTest = parsedKeyUsage
 
 			var extUsage x509.ExtKeyUsage
 			i := mathRand.Int() % 4
@@ -1583,6 +1708,77 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 	return ret
 }
 
+func TestBackend_PathFetchValidRaw(t *testing.T) {
+	// create the backend
+	config := logical.TestBackendConfig()
+	storage := &logical.InmemStorage{}
+	config.StorageView = storage
+
+	b := Backend(config)
+	err := b.Setup(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedSerial := "17:67:16:b0:b9:45:58:c0:3a:29:e3:cb:d6:98:33:7a:a6:3b:66:c1"
+	expectedCert := []byte("test certificate")
+	entry := &logical.StorageEntry{
+		Key:   fmt.Sprintf("certs/%s", normalizeSerial(expectedSerial)),
+		Value: expectedCert,
+	}
+	err = storage.Put(context.Background(), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// get der cert
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      fmt.Sprintf("cert/%s/raw", expectedSerial),
+		Storage:   storage,
+	})
+	if resp != nil && resp.IsError() {
+		t.Fatalf("failed to get raw cert, %#v", resp)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// check the raw cert matches the response body
+	if bytes.Compare(resp.Data[logical.HTTPRawBody].([]byte), expectedCert) != 0 {
+		t.Fatalf("failed to get raw cert")
+	}
+	if resp.Data[logical.HTTPContentType] != "application/pkix-cert" {
+		t.Fatalf("failed to get raw cert content-type")
+	}
+
+	// get pem
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.ReadOperation,
+		Path:      fmt.Sprintf("cert/%s/raw/pem", expectedSerial),
+		Storage:   storage,
+	})
+	if resp != nil && resp.IsError() {
+		t.Fatalf("failed to get raw, %#v", resp)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: expectedCert,
+	}
+	pemCert := []byte(strings.TrimSpace(string(pem.EncodeToMemory(pemBlock))))
+	// check the pem cert matches the response body
+	if bytes.Compare(resp.Data[logical.HTTPRawBody].([]byte), pemCert) != 0 {
+		t.Fatalf("failed to get pem cert")
+	}
+	if resp.Data[logical.HTTPContentType] != "application/pem-certificate-chain" {
+		t.Fatalf("failed to get raw cert content-type")
+	}
+}
+
 func TestBackend_PathFetchCertList(t *testing.T) {
 	// create the backend
 	config := logical.TestBackendConfig()
@@ -1602,10 +1798,11 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 	}
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "root/generate/internal",
-		Storage:   storage,
-		Data:      rootData,
+		Operation:  logical.UpdateOperation,
+		Path:       "root/generate/internal",
+		Storage:    storage,
+		Data:       rootData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to generate root, %#v", resp)
@@ -1621,10 +1818,11 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 	}
 
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "config/urls",
-		Storage:   storage,
-		Data:      urlsData,
+		Operation:  logical.UpdateOperation,
+		Path:       "config/urls",
+		Storage:    storage,
+		Data:       urlsData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to config urls, %#v", resp)
@@ -1641,10 +1839,11 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 	}
 
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "roles/test-example",
-		Storage:   storage,
-		Data:      roleData,
+		Operation:  logical.UpdateOperation,
+		Path:       "roles/test-example",
+		Storage:    storage,
+		Data:       roleData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to create a role, %#v", resp)
@@ -1660,10 +1859,11 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 			"common_name": "example.test.com",
 		}
 		resp, err = b.HandleRequest(context.Background(), &logical.Request{
-			Operation: logical.UpdateOperation,
-			Path:      "issue/test-example",
-			Storage:   storage,
-			Data:      certData,
+			Operation:  logical.UpdateOperation,
+			Path:       "issue/test-example",
+			Storage:    storage,
+			Data:       certData,
+			MountPoint: "pki/",
 		})
 		if resp != nil && resp.IsError() {
 			t.Fatalf("failed to issue a cert, %#v", resp)
@@ -1677,9 +1877,10 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 
 	// list certs
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ListOperation,
-		Path:      "certs",
-		Storage:   storage,
+		Operation:  logical.ListOperation,
+		Path:       "certs",
+		Storage:    storage,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to list certs, %#v", resp)
@@ -1694,9 +1895,10 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 
 	// list certs/
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.ListOperation,
-		Path:      "certs/",
-		Storage:   storage,
+		Operation:  logical.ListOperation,
+		Path:       "certs/",
+		Storage:    storage,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to list certs, %#v", resp)
@@ -1725,14 +1927,15 @@ func TestBackend_SignVerbatim(t *testing.T) {
 	// generate root
 	rootData := map[string]interface{}{
 		"common_name": "test.com",
-		"ttl":         "172800",
+		"not_after":   "9999-12-31T23:59:59Z",
 	}
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "root/generate/internal",
-		Storage:   storage,
-		Data:      rootData,
+		Operation:  logical.UpdateOperation,
+		Path:       "root/generate/internal",
+		Storage:    storage,
+		Data:       rootData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to generate root, %#v", *resp)
@@ -1773,6 +1976,7 @@ func TestBackend_SignVerbatim(t *testing.T) {
 		Data: map[string]interface{}{
 			"csr": pemCSR,
 		},
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to sign-verbatim basic CSR: %#v", *resp)
@@ -1790,10 +1994,11 @@ func TestBackend_SignVerbatim(t *testing.T) {
 		"max_ttl": "8h",
 	}
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "roles/test",
-		Storage:   storage,
-		Data:      roleData,
+		Operation:  logical.UpdateOperation,
+		Path:       "roles/test",
+		Storage:    storage,
+		Data:       roleData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to create a role, %#v", *resp)
@@ -1809,6 +2014,7 @@ func TestBackend_SignVerbatim(t *testing.T) {
 			"csr": pemCSR,
 			"ttl": "5h",
 		},
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to sign-verbatim ttl'd CSR: %#v", *resp)
@@ -1827,6 +2033,7 @@ func TestBackend_SignVerbatim(t *testing.T) {
 			"csr": pemCSR,
 			"ttl": "12h",
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1854,6 +2061,44 @@ func TestBackend_SignVerbatim(t *testing.T) {
 		t.Fatalf("sign-verbatim did not properly cap validity period on signed CSR")
 	}
 
+	// Now check signing a certificate using the not_after input using the Y10K value
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      "sign-verbatim/test",
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"csr":       pemCSR,
+			"not_after": "9999-12-31T23:59:59Z",
+		},
+		MountPoint: "pki/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatalf(resp.Error().Error())
+	}
+	if resp.Data == nil || resp.Data["certificate"] == nil {
+		t.Fatal("did not get expected data")
+	}
+	certString = resp.Data["certificate"].(string)
+	block, _ = pem.Decode([]byte(certString))
+	if block == nil {
+		t.Fatal("nil pem block")
+	}
+	certs, err = x509.ParseCertificates(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(certs) != 1 {
+		t.Fatalf("expected a single cert, got %d", len(certs))
+	}
+	cert = certs[0]
+	notAfter := cert.NotAfter.Format(time.RFC3339)
+	if notAfter != "9999-12-31T23:59:59Z" {
+		t.Fatal(fmt.Errorf("not after from certificate is not matching with input parameter"))
+	}
+
 	// now check that if we set generate-lease it takes it from the role and the TTLs match
 	roleData = map[string]interface{}{
 		"ttl":            "4h",
@@ -1861,10 +2106,11 @@ func TestBackend_SignVerbatim(t *testing.T) {
 		"generate_lease": true,
 	}
 	resp, err = b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "roles/test",
-		Storage:   storage,
-		Data:      roleData,
+		Operation:  logical.UpdateOperation,
+		Path:       "roles/test",
+		Storage:    storage,
+		Data:       roleData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to create a role, %#v", *resp)
@@ -1880,6 +2126,7 @@ func TestBackend_SignVerbatim(t *testing.T) {
 			"csr": pemCSR,
 			"ttl": "5h",
 		},
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to sign-verbatim role-leased CSR: %#v", *resp)
@@ -2067,6 +2314,7 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 
 	_, err = client.Logical().Write("root/sign-verbatim/test", map[string]interface{}{
 		"common_name": "myint.com",
+		"other_sans":  "1.3.6.1.4.1.311.20.2.3;utf8:caadmin@example.com",
 		"csr":         csr,
 		"ttl":         "60h",
 	})
@@ -2076,6 +2324,7 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 
 	resp, err = client.Logical().Write("root/root/sign-intermediate", map[string]interface{}{
 		"common_name": "myint.com",
+		"other_sans":  "1.3.6.1.4.1.311.20.2.3;utf8:caadmin@example.com",
 		"csr":         csr,
 		"ttl":         "60h",
 	})
@@ -2109,10 +2358,11 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 	}
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "root/generate/internal",
-		Storage:   storage,
-		Data:      rootData,
+		Operation:  logical.UpdateOperation,
+		Path:       "root/generate/internal",
+		Storage:    storage,
+		Data:       rootData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to generate root, %#v", *resp)
@@ -2143,6 +2393,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 		Data: map[string]interface{}{
 			"certificate": ss,
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2173,6 +2424,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 		Data: map[string]interface{}{
 			"certificate": ss,
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2192,6 +2444,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 		Data: map[string]interface{}{
 			"certificate": ss,
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2210,7 +2463,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	signingBundle, err := fetchCAInfo(context.Background(), &logical.Request{Storage: storage})
+	signingBundle, err := fetchCAInfo(context.Background(), b, &logical.Request{Storage: storage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2254,10 +2507,11 @@ func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 	}
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "root/generate/internal",
-		Storage:   storage,
-		Data:      rootData,
+		Operation:  logical.UpdateOperation,
+		Path:       "root/generate/internal",
+		Storage:    storage,
+		Data:       rootData,
+		MountPoint: "pki/",
 	})
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to generate root, %#v", *resp)
@@ -2289,6 +2543,7 @@ func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 		Data: map[string]interface{}{
 			"certificate": ss,
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2310,6 +2565,7 @@ func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 			"certificate": ss,
 			"require_matching_certificate_algorithms": false,
 		},
+		MountPoint: "pki/",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2328,6 +2584,7 @@ func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 			"certificate": ss,
 			"require_matching_certificate_algorithms": true,
 		},
+		MountPoint: "pki/",
 	})
 	if err == nil {
 		t.Fatal("expected error due to mismatched algorithms")
@@ -2862,6 +3119,130 @@ func TestBackend_URI_SANs(t *testing.T) {
 	}
 }
 
+func TestBackend_AllowedURISANsTemplate(t *testing.T) {
+	coreConfig := &vault.CoreConfig{
+		CredentialBackends: map[string]logical.Factory{
+			"userpass": userpass.Factory,
+		},
+		LogicalBackends: map[string]logical.Factory{
+			"pki": Factory,
+		},
+	}
+	cluster := vault.NewTestCluster(t, coreConfig, &vault.TestClusterOptions{
+		HandlerFunc: vaulthttp.Handler,
+	})
+	cluster.Start()
+	defer cluster.Cleanup()
+	client := cluster.Cores[0].Client
+
+	// Write test policy for userpass auth method.
+	err := client.Sys().PutPolicy("test", `
+   path "pki/*" {
+     capabilities = ["update"]
+   }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable userpass auth method.
+	if err := client.Sys().EnableAuth("userpass", "userpass", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Configure test role for userpass.
+	if _, err := client.Logical().Write("auth/userpass/users/userpassname", map[string]interface{}{
+		"password": "test",
+		"policies": "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Login userpass for test role and keep client token.
+	secret, err := client.Logical().Write("auth/userpass/login/userpassname", map[string]interface{}{
+		"password": "test",
+	})
+	if err != nil || secret == nil {
+		t.Fatal(err)
+	}
+	userpassToken := secret.Auth.ClientToken
+
+	// Get auth accessor for identity template.
+	auths, err := client.Sys().ListAuth()
+	if err != nil {
+		t.Fatal(err)
+	}
+	userpassAccessor := auths["userpass/"].Accessor
+
+	// Mount PKI.
+	err = client.Sys().Mount("pki", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "60h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate internal CA.
+	_, err = client.Logical().Write("pki/root/generate/internal", map[string]interface{}{
+		"ttl":         "40h",
+		"common_name": "myvault.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write role PKI.
+	_, err = client.Logical().Write("pki/roles/test", map[string]interface{}{
+		"allowed_uri_sans": []string{
+			"spiffe://domain/{{identity.entity.aliases." + userpassAccessor + ".name}}",
+			"spiffe://domain/{{identity.entity.aliases." + userpassAccessor + ".name}}/*", "spiffe://domain/foo",
+		},
+		"allowed_uri_sans_template": true,
+		"require_cn":                false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue certificate with identity templating
+	client.SetToken(userpassToken)
+	_, err = client.Logical().Write("pki/issue/test", map[string]interface{}{"uri_sans": "spiffe://domain/userpassname, spiffe://domain/foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue certificate with identity templating and glob
+	client.SetToken(userpassToken)
+	_, err = client.Logical().Write("pki/issue/test", map[string]interface{}{"uri_sans": "spiffe://domain/userpassname/bar"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue certificate with non-matching identity template parameter
+	client.SetToken(userpassToken)
+	_, err = client.Logical().Write("pki/issue/test", map[string]interface{}{"uri_sans": "spiffe://domain/unknownuser"})
+	if err == nil {
+		t.Fatal(err)
+	}
+
+	// Set allowed_uri_sans_template to false.
+	_, err = client.Logical().Write("pki/roles/test", map[string]interface{}{
+		"allowed_uri_sans_template": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue certificate with userpassToken.
+	_, err = client.Logical().Write("pki/issue/test", map[string]interface{}{"uri_sans": "spiffe://domain/users/userpassname"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestBackend_AllowedDomainsTemplate(t *testing.T) {
 	coreConfig := &vault.CoreConfig{
 		CredentialBackends: map[string]logical.Factory{
@@ -3095,6 +3476,22 @@ func setCerts() {
 }
 
 func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
+	// Use a ridiculously long time to minimize the chance
+	// that we have to deal with more than one interval.
+	// InMemSink rounds down to an interval boundary rather than
+	// starting one at the time of initialization.
+	inmemSink := metrics.NewInmemSink(
+		1000000*time.Hour,
+		2000000*time.Hour)
+
+	metricsConf := metrics.DefaultConfig("")
+	metricsConf.EnableHostname = false
+	metricsConf.EnableHostnameLabel = false
+	metricsConf.EnableServiceLabel = false
+	metricsConf.EnableTypePrefix = false
+
+	metrics.NewGlobal(metricsConf, inmemSink)
+
 	// Enable PKI secret engine
 	coreConfig := &vault.CoreConfig{
 		LogicalBackends: map[string]logical.Factory{
@@ -3246,6 +3643,91 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 	// Sleep a bit to make sure we're past the safety buffer
 	time.Sleep(2 * time.Second)
 
+	// Issue a tidy-status on /pki
+	{
+		tidyStatus, err := client.Logical().Read("pki/tidy-status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedData := map[string]interface{}{
+			"safety_buffer":              json.Number("1"),
+			"tidy_cert_store":            true,
+			"tidy_revoked_certs":         true,
+			"state":                      "Finished",
+			"error":                      nil,
+			"time_started":               nil,
+			"time_finished":              nil,
+			"message":                    nil,
+			"cert_store_deleted_count":   json.Number("1"),
+			"revoked_cert_deleted_count": json.Number("1"),
+		}
+		// Let's copy the times from the response so that we can use deep.Equal()
+		timeStarted, ok := tidyStatus.Data["time_started"]
+		if !ok || timeStarted == "" {
+			t.Fatal("Expected tidy status response to include a value for time_started")
+		}
+		expectedData["time_started"] = timeStarted
+		timeFinished, ok := tidyStatus.Data["time_finished"]
+		if !ok || timeFinished == "" {
+			t.Fatal("Expected tidy status response to include a value for time_finished")
+		}
+		expectedData["time_finished"] = timeFinished
+
+		if diff := deep.Equal(expectedData, tidyStatus.Data); diff != nil {
+			t.Fatal(diff)
+		}
+	}
+	// Check the tidy metrics
+	{
+		// Map of gagues to expected value
+		expectedGauges := map[string]float32{
+			"secrets.pki.tidy.cert_store_current_entry":   0,
+			"secrets.pki.tidy.cert_store_total_entries":   1,
+			"secrets.pki.tidy.revoked_cert_current_entry": 0,
+			"secrets.pki.tidy.revoked_cert_total_entries": 1,
+			"secrets.pki.tidy.start_time_epoch":           0,
+		}
+		// Map of counters to the sum of the metrics for that counter
+		expectedCounters := map[string]float64{
+			"secrets.pki.tidy.cert_store_deleted_count":   1,
+			"secrets.pki.tidy.revoked_cert_deleted_count": 1,
+			"secrets.pki.tidy.success":                    2,
+			// Note that "secrets.pki.tidy.failure" won't be in the captured metrics
+		}
+
+		// If the metrics span mnore than one interval, skip the checks
+		intervals := inmemSink.Data()
+		if len(intervals) == 1 {
+			interval := inmemSink.Data()[0]
+
+			for gauge, value := range expectedGauges {
+				if _, ok := interval.Gauges[gauge]; !ok {
+					t.Fatalf("Expected metrics to include a value for gauge %s", gauge)
+				}
+				if value != interval.Gauges[gauge].Value {
+					t.Fatalf("Expected value metric %s to be %f but got %f", gauge, value, interval.Gauges[gauge].Value)
+				}
+
+			}
+			for counter, value := range expectedCounters {
+				if _, ok := interval.Counters[counter]; !ok {
+					t.Fatalf("Expected metrics to include a value for couter %s", counter)
+				}
+				if value != interval.Counters[counter].Sum {
+					t.Fatalf("Expected the sum of metric %s to be %f but got %f", counter, value, interval.Counters[counter].Sum)
+				}
+			}
+
+			tidyDuration, ok := interval.Samples["secrets.pki.tidy.duration"]
+			if !ok {
+				t.Fatal("Expected metrics to include a value for sample secrets.pki.tidy.duration")
+			}
+			if tidyDuration.Count <= 0 {
+				t.Fatalf("Expected metrics to have count > 0 for sample secrets.pki.tidy.duration, but got %d", tidyDuration.Count)
+			}
+		}
+	}
+
 	req = client.NewRequest("GET", "/v1/pki/crl")
 	resp, err = client.RawRequest(req)
 	if err != nil {
@@ -3269,6 +3751,159 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 	revokedCerts = crl.TBSCertList.RevokedCertificates
 	if len(revokedCerts) != 0 {
 		t.Fatal("expected CRL to be empty")
+	}
+}
+
+func TestBackend_Root_FullCAChain(t *testing.T) {
+	coreConfig := &vault.CoreConfig{
+		LogicalBackends: map[string]logical.Factory{
+			"pki": Factory,
+		},
+	}
+	cluster := vault.NewTestCluster(t, coreConfig, &vault.TestClusterOptions{
+		HandlerFunc: vaulthttp.Handler,
+	})
+	cluster.Start()
+	defer cluster.Cleanup()
+
+	client := cluster.Cores[0].Client
+	var err error
+
+	// Generate a root CA at /pki-root
+	err = client.Sys().Mount("pki-root", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "32h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.Logical().Write("pki-root/root/generate/exported", map[string]interface{}{
+		"common_name": "root myvault.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected ca info")
+	}
+	rootData := resp.Data
+	rootCert := rootData["certificate"].(string)
+
+	// Validate that root's /cert/ca-chain now contains the certificate.
+	resp, err = client.Logical().Read("pki-root/cert/ca_chain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected intermediate chain information")
+	}
+
+	fullChain := resp.Data["ca_chain"].(string)
+	if !strings.Contains(fullChain, rootCert) {
+		t.Fatal("expected full chain to contain root certificate")
+	}
+
+	// Now generate an intermediate at /pki-intermediate, signed by the root.
+	err = client.Sys().Mount("pki-intermediate", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "32h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = client.Logical().Write("pki-intermediate/intermediate/generate/exported", map[string]interface{}{
+		"common_name": "intermediate myvault.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected intermediate CSR info")
+	}
+	intermediateData := resp.Data
+	intermediateKey := intermediateData["private_key"].(string)
+
+	resp, err = client.Logical().Write("pki-root/root/sign-intermediate", map[string]interface{}{
+		"csr":    intermediateData["csr"],
+		"format": "pem_bundle",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected signed intermediate info")
+	}
+	intermediateSignedData := resp.Data
+	intermediateCert := intermediateSignedData["certificate"].(string)
+
+	resp, err = client.Logical().Write("pki-intermediate/intermediate/set-signed", map[string]interface{}{
+		"certificate": intermediateCert + "\n" + rootCert + "\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Validate that intermediate's ca_chain field now includes the full
+	// chain.
+	resp, err = client.Logical().Read("pki-intermediate/cert/ca_chain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected intermediate chain information")
+	}
+
+	fullChain = resp.Data["ca_chain"].(string)
+	if !strings.Contains(fullChain, intermediateCert) {
+		t.Fatal("expected full chain to contain intermediate certificate")
+	}
+	if !strings.Contains(fullChain, rootCert) {
+		t.Fatal("expected full chain to contain root certificate")
+	}
+
+	// Finally, import this signing cert chain into a new mount to ensure
+	// "external" CAs behave as expected.
+	err = client.Sys().Mount("pki-external", &api.MountInput{
+		Type: "pki",
+		Config: api.MountConfigInput{
+			DefaultLeaseTTL: "16h",
+			MaxLeaseTTL:     "32h",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = client.Logical().Write("pki-external/config/ca", map[string]interface{}{
+		"pem_bundle": intermediateKey + "\n" + intermediateCert + "\n" + rootCert + "\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Validate the external chain information was loaded correctly.
+	resp, err = client.Logical().Read("pki-external/cert/ca_chain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("expected intermediate chain information")
+	}
+
+	fullChain = resp.Data["ca_chain"].(string)
+	if !strings.Contains(fullChain, intermediateCert) {
+		t.Fatal("expected full chain to contain intermediate certificate")
+	}
+	if !strings.Contains(fullChain, rootCert) {
+		t.Fatal("expected full chain to contain root certificate")
 	}
 }
 
