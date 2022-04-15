@@ -1,3 +1,9 @@
+vault (1.10.0-2kaisen) kaisen-packages; urgency=medium
+
+  * Added number version in the builded binary
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Fri, 15 Apr 2022 12:57:46 +0100
+
 vault (1.10.0-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.10.0 release
