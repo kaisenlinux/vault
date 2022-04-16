@@ -1,0 +1,13 @@
+Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
+
+--- vault-1.10.0.orig/Makefile
++++ vault-1.10.0/Makefile
+@@ -128,7 +128,7 @@ ci-bootstrap:
+ 	done
+ 
+ # bootstrap the build by downloading additional tools that may be used by devs
+-bootstrap: ci-bootstrap
++bootstrap:
+ 	go generate -tags tools tools/tools.go
+ 
+ # Note: if you have plugins in GOPATH you can update all of them via something like:

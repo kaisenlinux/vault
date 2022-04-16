@@ -1,3 +1,11 @@
+vault (1.10.0-3kaisen) kaisen-packages; urgency=medium
+
+  * Improve a lot the packaging
+  * Vault UI is now integrated in the builded binary
+  * Added quilt patch to remove .git folder dependancies and yarn
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Fri, 15 Apr 2022 21:34:57 +0100
+
 vault (1.10.0-2kaisen) kaisen-packages; urgency=medium
 
   * Added number version in the builded binary

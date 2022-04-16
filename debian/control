@@ -2,11 +2,16 @@ Source: vault
 Section: admin
 Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
-Build-Depends: debhelper-compat (= 13), dh-golang, golang-go (>= 1.17)
+Build-Depends: debhelper-compat (= 13),
+	       dh-golang,
+	       golang-go (>= 1.17),
+	       golang-golang-x-tools,
+	       gox (>= 1.0.1-1kaisen),
+	       npm,
 Standards-Version: 4.6.0
 Homepage: https://www.vaultproject.io/
-#Vcs-Browser: https://gitlab.com/kaisenlinux/packages/vault
-#Vcs-Git: https://gitlab.com/kaisenlinux/packages/vault.git
+Vcs-Browser: https://gitlab.com/kaisenlinux/packages/vault
+Vcs-Git: https://gitlab.com/kaisenlinux/packages/vault.git
 Rules-Requires-Root: no
 XS-Go-Import-Path: github.com/hashicorp/vault
 

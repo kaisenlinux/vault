@@ -1,0 +1,17 @@
+Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
+
+--- vault-1.10.0.orig/Makefile
++++ vault-1.10.0/Makefile
+@@ -166,10 +166,10 @@ test-ui-browserstack: check-vault-in-pat
+ 
+ ember-dist:
+ 	@echo "--> Installing JavaScript assets"
+-	@cd ui && yarn --ignore-optional
++	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn --ignore-optional
+ 	@cd ui && npm rebuild node-sass
+ 	@echo "--> Building Ember application"
+-	@cd ui && yarn run build
++	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run build
+ 	@rm -rf ui/if-you-need-to-delete-this-open-an-issue-async-disk-cache
+ 
+ ember-dist-dev:

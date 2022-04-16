@@ -1,18 +1,39 @@
 #!/usr/bin/make -f
 
 export GOPATH=$(CURDIR)/obj-x86_64-linux-gnu
+export GOBIN=$(CURDIR)/obj-x86_64-linux-gnu/bin
+export GO111MODULE=on
 
 %:
 	dh $@ --buildsystem=golang
 
 override_dh_auto_build:
-	go install github.com/hashicorp/vault
-
+	npm install --global yarn --prefix $(CURDIR)/obj-x86_64-linux-gnu
+	make bootstrap
+	make version
+	make mysql-database-plugin
+	make mysql-legacy-database-plugin
+	make cassandra-database-plugin
+	make influxdb-database-plugin
+	make postgresql-database-plugin
+	make mssql-database-plugin
+	make hana-database-plugin
+	make mongodb-database-plugin
+	make static-dist
+	make assetcheck
+	make bin
+	make test
+	
 override_dh_auto_test:
 	go test
 
 override_dh_auto_install:
-	dh_auto_install -- --no-source
+	mkdir -p $(CURDIR)/debian/vault/usr/bin
+	cp -f $(CURDIR)/bin/vault $(CURDIR)/debian/vault/usr/bin
+	mkdir -p $(CURDIR)/debian/vault/etc
+	cp -rf $(CURDIR)/debian/etc/* $(CURDIR)/debian/vault/etc/
+	mkdir -p $(CURDIR)/debian/vault/usr/share/pixmaps
+	cp -f $(CURDIR)/debian/vault.png $(CURDIR)/debian/vault/usr/share/pixmaps
 
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start
