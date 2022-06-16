@@ -11,7 +11,6 @@ StartLimitBurst=3
 EnvironmentFile=/etc/vault.d/vault.env
 User=vault
 Group=vault
-Type=forking
 ProtectSystem=full
 ProtectHome=read-only
 PrivateTmp=yes

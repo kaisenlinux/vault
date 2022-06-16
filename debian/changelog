@@ -1,13 +1,11 @@
 vault (1.10.4-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.10.4 version
-  * Adding type forking for the systemd service to use vault system
-    user with the daemon
   * Adding api_addr in the conffile
   * Update maintainers scripts to add the /srv/vault folder after the installation
     of the package and delete it when the package is purged
 
- -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 16 Jun 2022 04:10:27 +0100
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 16 Jun 2022 05:56:17 +0100
 
 vault (1.10.3-1kaisen) kaisen-packages; urgency=medium
 
