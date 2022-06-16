@@ -1,6 +1,7 @@
 # Full configuration options can be found at https://www.vaultproject.io/docs/configuration
 
 ui = true
+api_addr = "http://127.0.0.1:8200"
 
 #mlock = true
 #disable_mlock = true
@@ -21,11 +22,11 @@ storage "file" {
 #}
 
 # HTTPS listener
-listener "tcp" {
-  address       = "0.0.0.0:8200"
-  tls_cert_file = "/etc/ssl/certs/tls.crt"
-  tls_key_file  = "/etc/ssl/private/tls.key"
-}
+#listener "tcp" {
+#  address       = "0.0.0.0:8200"
+#  tls_cert_file = "/etc/ssl/certs/tls.crt"
+#  tls_key_file  = "/etc/ssl/private/tls.key"
+#}
 
 # Enterprise license_path
 # This will be required for enterprise as of v1.8

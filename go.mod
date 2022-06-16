@@ -87,7 +87,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/hashicorp/hcl v1.0.1-vault-3
 	github.com/hashicorp/nomad/api v0.0.0-20211006193434-215bf04bc650
-	github.com/hashicorp/raft v1.3.3
+	github.com/hashicorp/raft v1.3.9
 	github.com/hashicorp/raft-autopilot v0.1.3
 	github.com/hashicorp/raft-boltdb/v2 v2.0.0-20210421194847-a7e34179d62c
 	github.com/hashicorp/raft-snapshot v1.0.4
@@ -98,7 +98,7 @@ require (
 	github.com/hashicorp/vault-plugin-auth-gcp v0.12.1
 	github.com/hashicorp/vault-plugin-auth-jwt v0.12.1
 	github.com/hashicorp/vault-plugin-auth-kerberos v0.6.0
-	github.com/hashicorp/vault-plugin-auth-kubernetes v0.12.0
+	github.com/hashicorp/vault-plugin-auth-kubernetes v0.12.1
 	github.com/hashicorp/vault-plugin-auth-oci v0.10.0
 	github.com/hashicorp/vault-plugin-database-couchbase v0.6.0
 	github.com/hashicorp/vault-plugin-database-elasticsearch v0.10.0
@@ -115,10 +115,10 @@ require (
 	github.com/hashicorp/vault-plugin-secrets-openldap v0.7.1
 	github.com/hashicorp/vault-plugin-secrets-terraform v0.4.0
 	github.com/hashicorp/vault-testing-stepwise v0.1.2
-	github.com/hashicorp/vault/api v1.4.1
+	github.com/hashicorp/vault/api v1.5.0
 	github.com/hashicorp/vault/api/auth/approle v0.1.0
 	github.com/hashicorp/vault/api/auth/userpass v0.1.0
-	github.com/hashicorp/vault/sdk v0.4.2-0.20220429220057-bdb59a36e632
+	github.com/hashicorp/vault/sdk v0.4.2-0.20220513130519-057103fba822
 	github.com/influxdata/influxdb1-client v0.0.0-20200827194710-b269163b24ab
 	github.com/jcmturner/gokrb5/v8 v8.4.2
 	github.com/jefferai/isbadcipher v0.0.0-20190226160619-51d2077c035f
