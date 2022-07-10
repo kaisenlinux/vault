@@ -185,28 +185,50 @@ func TestLifetimeWatcher(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			doneCh := make(chan error, 1)
 			go func() {
-				v.doneCh <- v.doRenewWithOptions(false, false, tc.leaseDurationSeconds, "myleaseID", tc.renew, time.Second)
+				doneCh <- v.doRenewWithOptions(false, false,
+					tc.leaseDurationSeconds, "myleaseID", tc.renew, time.Second)
 			}()
 			defer v.Stop()
 
-			select {
-			case <-time.After(tc.maxTestTime):
-				t.Fatalf("renewal didn't happen")
-			case r := <-v.RenewCh():
-				if !tc.expectRenewal {
-					t.Fatal("expected no renewals")
+			receivedRenewal := false
+			receivedDone := false
+		ChannelLoop:
+			for {
+				select {
+				case <-time.After(tc.maxTestTime):
+					t.Fatalf("renewal didn't happen")
+				case r := <-v.RenewCh():
+					if !tc.expectRenewal {
+						t.Fatal("expected no renewals")
+					}
+					if r.Secret != renewedSecret {
+						t.Fatalf("expected secret %v, got %v", renewedSecret, r.Secret)
+					}
+					receivedRenewal = true
+					if !receivedDone {
+						continue ChannelLoop
+					}
+					break ChannelLoop
+				case err := <-doneCh:
+					receivedDone = true
+					if tc.expectError != nil && !errors.Is(err, tc.expectError) {
+						t.Fatalf("expected error %q, got: %v", tc.expectError, err)
+					}
+					if tc.expectError == nil && err != nil {
+						t.Fatalf("expected no error, got: %v", err)
+					}
+					if tc.expectRenewal && !receivedRenewal {
+						// We might have received the stop before the renew call on the channel.
+						continue ChannelLoop
+					}
+					break ChannelLoop
 				}
-				if r.Secret != renewedSecret {
-					t.Fatalf("expected secret %v, got %v", renewedSecret, r.Secret)
-				}
-			case err := <-v.DoneCh():
-				if tc.expectError != nil && !errors.Is(err, tc.expectError) {
-					t.Fatalf("expected error %q, got: %v", tc.expectError, err)
-				}
-				if tc.expectRenewal {
-					t.Fatal("expected at least one renewal")
-				}
+			}
+
+			if tc.expectRenewal && !receivedRenewal {
+				t.Fatalf("expected at least one renewal, got none.")
 			}
 		})
 	}

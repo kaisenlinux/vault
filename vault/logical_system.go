@@ -29,7 +29,6 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/go-secure-stdlib/strutil"
-	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/helper/hostutil"
 	"github.com/hashicorp/vault/helper/identity"
 	"github.com/hashicorp/vault/helper/metricsutil"
@@ -450,6 +449,10 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, req *logi
 		return logical.ErrorResponse("missing command value"), nil
 	}
 
+	if err = b.Core.CheckPluginPerms(command); err != nil {
+		return nil, err
+	}
+
 	// For backwards compatibility, also accept args as part of command. Don't
 	// accepts args in both command and args.
 	args := d.Get("args").([]string)
@@ -738,7 +741,8 @@ func (b *SystemBackend) handleRekeyRetrieve(
 	ctx context.Context,
 	req *logical.Request,
 	data *framework.FieldData,
-	recovery bool) (*logical.Response, error) {
+	recovery bool,
+) (*logical.Response, error) {
 	backup, err := b.Core.RekeyRetrieveBackup(ctx, recovery)
 	if err != nil {
 		return nil, fmt.Errorf("unable to look up backed-up keys: %w", err)
@@ -789,7 +793,8 @@ func (b *SystemBackend) handleRekeyDelete(
 	ctx context.Context,
 	req *logical.Request,
 	data *framework.FieldData,
-	recovery bool) (*logical.Response, error) {
+	recovery bool,
+) (*logical.Response, error) {
 	err := b.Core.RekeyDeleteBackup(ctx, recovery)
 	if err != nil {
 		return nil, fmt.Errorf("error during deletion of backed-up keys: %w", err)
@@ -1079,7 +1084,8 @@ func (b *SystemBackend) handleReadMount(ctx context.Context, req *logical.Reques
 
 // used to intercept an HTTPCodedError so it goes back to callee
 func handleError(
-	err error) (*logical.Response, error) {
+	err error,
+) (*logical.Response, error) {
 	if strings.Contains(err.Error(), logical.ErrReadOnly.Error()) {
 		return logical.ErrorResponse(err.Error()), err
 	}
@@ -1094,7 +1100,8 @@ func handleError(
 // Performs a similar function to handleError, but upon seeing a ReadOnlyError
 // will actually strip it out to prevent forwarding
 func handleErrorNoReadOnlyForward(
-	err error) (*logical.Response, error) {
+	err error,
+) (*logical.Response, error) {
 	if strings.Contains(err.Error(), logical.ErrReadOnly.Error()) {
 		return nil, fmt.Errorf("operation could not be completed as storage is read-only")
 	}
@@ -2004,7 +2011,8 @@ func (b *SystemBackend) handleRevokeForce(ctx context.Context, req *logical.Requ
 
 // handleRevokePrefixCommon is used to revoke a prefix with many LeaseIDs
 func (b *SystemBackend) handleRevokePrefixCommon(ctx context.Context,
-	req *logical.Request, data *framework.FieldData, force, sync bool) (*logical.Response, error) {
+	req *logical.Request, data *framework.FieldData, force, sync bool,
+) (*logical.Response, error) {
 	// Get all the options
 	prefix := data.Get("prefix").(string)
 
@@ -3614,55 +3622,8 @@ func (b *SystemBackend) pathHashWrite(ctx context.Context, req *logical.Request,
 	return resp, nil
 }
 
-func (b *SystemBackend) pathRandomWrite(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	bytes := 0
-	var err error
-	strBytes := d.Get("urlbytes").(string)
-	if strBytes != "" {
-		bytes, err = strconv.Atoi(strBytes)
-		if err != nil {
-			return logical.ErrorResponse(fmt.Sprintf("error parsing url-set byte count: %s", err)), nil
-		}
-	} else {
-		bytes = d.Get("bytes").(int)
-	}
-	format := d.Get("format").(string)
-
-	if bytes < 1 {
-		return logical.ErrorResponse(`"bytes" cannot be less than 1`), nil
-	}
-
-	if bytes > maxBytes {
-		return logical.ErrorResponse(`"bytes" should be less than %d`, maxBytes), nil
-	}
-
-	switch format {
-	case "hex":
-	case "base64":
-	default:
-		return logical.ErrorResponse("unsupported encoding format %q; must be \"hex\" or \"base64\"", format), nil
-	}
-
-	randBytes, err := uuid.GenerateRandomBytes(bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	var retStr string
-	switch format {
-	case "hex":
-		retStr = hex.EncodeToString(randBytes)
-	case "base64":
-		retStr = base64.StdEncoding.EncodeToString(randBytes)
-	}
-
-	// Generate the response
-	resp := &logical.Response{
-		Data: map[string]interface{}{
-			"random_bytes": retStr,
-		},
-	}
-	return resp, nil
+func (b *SystemBackend) pathRandomWrite(_ context.Context, _ *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	return random.HandleRandomAPI(d, b.Core.secureRandomReader)
 }
 
 func hasMountAccess(ctx context.Context, acl *ACL, path string) bool {
@@ -4048,7 +4009,13 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 	doc := framework.NewOASDocument()
 
 	procMountGroup := func(group, mountPrefix string) error {
-		for mount := range resp.Data[group].(map[string]interface{}) {
+		for mount, entry := range resp.Data[group].(map[string]interface{}) {
+
+			var pluginType string
+			if t, ok := entry.(map[string]interface{})["type"]; ok {
+				pluginType = t.(string)
+			}
+
 			backend := b.Core.router.MatchingBackend(ctx, mountPrefix+mount)
 
 			if backend == nil {
@@ -4058,6 +4025,7 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 			req := &logical.Request{
 				Operation: logical.HelpOperation,
 				Storage:   req.Storage,
+				Data:      map[string]interface{}{"requestResponsePrefix": pluginType},
 			}
 
 			resp, err := backend.HandleRequest(ctx, req)
@@ -4113,6 +4081,11 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 
 				doc.Paths["/"+mountPrefix+mount+path] = obj
 			}
+
+			// Merge backend schema components
+			for e, schema := range backendDoc.Components.Schemas {
+				doc.Components.Schemas[e] = schema
+			}
 		}
 		return nil
 	}
@@ -4151,6 +4124,7 @@ type SealStatusResponse struct {
 	Progress     int    `json:"progress"`
 	Nonce        string `json:"nonce"`
 	Version      string `json:"version"`
+	BuildDate    string `json:"build_date"`
 	Migration    bool   `json:"migration"`
 	ClusterName  string `json:"cluster_name,omitempty"`
 	ClusterID    string `json:"cluster_id,omitempty"`
@@ -4184,6 +4158,7 @@ func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error
 			RecoverySeal: core.SealAccess().RecoveryKeySupported(),
 			StorageType:  core.StorageType(),
 			Version:      version.GetVersion().VersionNumber(),
+			BuildDate:    version.BuildDate,
 		}, nil
 	}
 
@@ -4212,6 +4187,7 @@ func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error
 		Progress:     progress,
 		Nonce:        nonce,
 		Version:      version.GetVersion().VersionNumber(),
+		BuildDate:    version.BuildDate,
 		Migration:    core.IsInSealMigrationMode() && !core.IsSealMigrated(),
 		ClusterName:  clusterName,
 		ClusterID:    clusterID,
@@ -4355,14 +4331,20 @@ func (b *SystemBackend) handleHAStatus(ctx context.Context, req *logical.Request
 		return nil, err
 	}
 
-	nodes := []HAStatusNode{
-		{
-			Hostname:       hostname,
-			APIAddress:     b.Core.redirectAddr,
-			ClusterAddress: b.Core.ClusterAddr(),
-			ActiveNode:     true,
-		},
+	leader := HAStatusNode{
+		Hostname:       hostname,
+		APIAddress:     b.Core.redirectAddr,
+		ClusterAddress: b.Core.ClusterAddr(),
+		ActiveNode:     true,
+		Version:        version.GetVersion().Version,
 	}
+
+	if rb := b.Core.getRaftBackend(); rb != nil {
+		leader.UpgradeVersion = rb.EffectiveVersion()
+		leader.RedundancyZone = rb.RedundancyZone()
+	}
+
+	nodes := []HAStatusNode{leader}
 
 	for _, peerNode := range b.Core.GetHAPeerNodesCached() {
 		lastEcho := peerNode.LastEcho
@@ -4371,8 +4353,15 @@ func (b *SystemBackend) handleHAStatus(ctx context.Context, req *logical.Request
 			APIAddress:     peerNode.APIAddress,
 			ClusterAddress: peerNode.ClusterAddress,
 			LastEcho:       &lastEcho,
+			Version:        peerNode.Version,
+			UpgradeVersion: peerNode.UpgradeVersion,
+			RedundancyZone: peerNode.RedundancyZone,
 		})
 	}
+
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].APIAddress < nodes[j].APIAddress
+	})
 
 	return &logical.Response{
 		Data: map[string]interface{}{
@@ -4387,17 +4376,17 @@ type HAStatusNode struct {
 	ClusterAddress string     `json:"cluster_address"`
 	ActiveNode     bool       `json:"active_node"`
 	LastEcho       *time.Time `json:"last_echo"`
+	Version        string     `json:"version"`
+	UpgradeVersion string     `json:"upgrade_version,omitempty"`
+	RedundancyZone string     `json:"redundancy_zone,omitempty"`
 }
 
 func (b *SystemBackend) handleVersionHistoryList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	versions := make([]VaultVersion, 0)
 	respKeys := make([]string, 0)
 
-	for versionString, ts := range b.Core.versionTimestamps {
-		versions = append(versions, VaultVersion{
-			Version:            versionString,
-			TimestampInstalled: ts,
-		})
+	for _, versionEntry := range b.Core.versionHistory {
+		versions = append(versions, versionEntry)
 	}
 
 	sort.Slice(versions, func(i, j int) bool {
@@ -4411,6 +4400,7 @@ func (b *SystemBackend) handleVersionHistoryList(ctx context.Context, req *logic
 
 		entry := map[string]interface{}{
 			"timestamp_installed": v.TimestampInstalled.Format(time.RFC3339),
+			"build_date":          v.BuildDate,
 			"previous_version":    nil,
 		}
 
@@ -5207,6 +5197,10 @@ This path responds to the following HTTP methods.
 	"activity-query": {
 		"Query the historical count of clients.",
 		"Query the historical count of clients.",
+	},
+	"activity-export": {
+		"Export the historical activity of clients.",
+		"Export the historical activity of clients.",
 	},
 	"activity-monthly": {
 		"Count of active clients so far this month.",

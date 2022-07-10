@@ -745,8 +745,6 @@ func (c *Core) persistAuth(ctx context.Context, table *MountTable, local *bool) 
 // setupCredentials is invoked after we've loaded the auth table to
 // initialize the credential backends and setup the router
 func (c *Core) setupCredentials(ctx context.Context) error {
-	var persistNeeded bool
-
 	c.authLock.Lock()
 	defer c.authLock.Unlock()
 
@@ -877,11 +875,6 @@ func (c *Core) setupCredentials(ctx context.Context) error {
 		}
 	}
 
-	if persistNeeded {
-		// persist non-local auth
-		return c.persistAuth(ctx, c.auth, nil)
-	}
-
 	return nil
 }
 
@@ -918,7 +911,18 @@ func (c *Core) newCredentialBackend(ctx context.Context, entry *MountEntry, sysV
 
 	f, ok := c.credentialBackends[t]
 	if !ok {
+		plug, err := c.pluginCatalog.Get(ctx, entry.Type, consts.PluginTypeCredential)
+		if err != nil {
+			return nil, err
+		}
+		if plug == nil {
+			return nil, fmt.Errorf("%w: %s", ErrPluginNotFound, entry.Type)
+		}
+
 		f = plugin.Factory
+		if !plug.Builtin {
+			f = wrapFactoryCheckPerms(c, plugin.Factory)
+		}
 	}
 
 	// Set up conf to pass in plugin_name

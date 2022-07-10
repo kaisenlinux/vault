@@ -192,8 +192,6 @@ func TestAutoSeal_HealthCheck(t *testing.T) {
 	defer autoSeal.StopHealthCheck()
 	setErr(errors.New("disconnected"))
 
-	time.Sleep(50 * time.Millisecond)
-
 	asu := strings.Join(autoSealUnavailableDuration, ".") + ";cluster=" + core.clusterName
 	tries := 10
 	for tries = 10; tries > 0; tries-- {

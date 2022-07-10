@@ -30,10 +30,8 @@ export default Route.extend({
     }
     window.opener.postMessage(queryParams, window.origin);
   },
-  renderTemplate() {
-    this.render(this.templateName, {
-      into: 'application',
-      outlet: 'main',
-    });
+  setupController(controller) {
+    this._super(...arguments);
+    controller.set('pageContainer', document.querySelector('.page-container'));
   },
 });

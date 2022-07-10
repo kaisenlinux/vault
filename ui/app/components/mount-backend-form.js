@@ -1,10 +1,10 @@
 import Ember from 'ember';
 import { inject as service } from '@ember/service';
-import { computed, set } from '@ember/object';
+import { computed } from '@ember/object';
 import Component from '@ember/component';
 import { task } from 'ember-concurrency';
 import { methods } from 'vault/helpers/mountable-auth-methods';
-import { engines, KMIP, TRANSFORM } from 'vault/helpers/mountable-secret-engines';
+import { engines, KMIP, TRANSFORM, KEYMGMT } from 'vault/helpers/mountable-secret-engines';
 import { waitFor } from '@ember/test-waiters';
 
 const METHODS = methods();
@@ -45,9 +45,9 @@ export default Component.extend({
 
   showEnable: false,
 
-  // cp-validation related properties
-  validationMessages: null,
-  isFormInvalid: false,
+  // validation related properties
+  modelValidations: null,
+  invalidFormAlert: null,
 
   mountIssue: false,
 
@@ -57,10 +57,6 @@ export default Component.extend({
     const modelType = type === 'secret' ? 'secret-engine' : 'auth-method';
     const model = this.store.createRecord(modelType);
     this.set('mountModel', model);
-
-    this.set('validationMessages', {
-      path: '',
-    });
   },
 
   mountTypes: computed('engines', 'mountType', function () {
@@ -69,7 +65,7 @@ export default Component.extend({
 
   engines: computed('version.{features[],isEnterprise}', function () {
     if (this.version.isEnterprise) {
-      return ENGINES.concat([KMIP, TRANSFORM]);
+      return ENGINES.concat([KMIP, TRANSFORM, KEYMGMT]);
     }
     return ENGINES;
   }),
@@ -92,10 +88,24 @@ export default Component.extend({
     }
   },
 
+  checkModelValidity(model) {
+    const { isValid, state, invalidFormMessage } = model.validate();
+    this.setProperties({
+      modelValidations: state,
+      invalidFormAlert: invalidFormMessage,
+    });
+
+    return isValid;
+  },
+
   mountBackend: task(
     waitFor(function* () {
       const mountModel = this.mountModel;
       const { type, path } = mountModel;
+      // only submit form if validations pass
+      if (!this.checkModelValidity(mountModel)) {
+        return;
+      }
       let capabilities = null;
       try {
         capabilities = yield this.store.findRecord('capabilities', `${path}/config`);
@@ -124,7 +134,6 @@ export default Component.extend({
       } catch (err) {
         if (err.httpStatus === 403) {
           this.mountIssue = true;
-          this.set('isFormInvalid', this.mountIssue);
           this.flashMessages.danger(
             'You do not have access to the sys/mounts endpoint. The secret engine was not mounted.'
           );
@@ -166,28 +175,9 @@ export default Component.extend({
 
   actions: {
     onKeyUp(name, value) {
-      // validate path
-      if (name === 'path') {
-        this.mountModel.set('path', value);
-        this.mountModel.validations.attrs.path.isValid
-          ? set(this.validationMessages, 'path', '')
-          : set(this.validationMessages, 'path', this.mountModel.validations.attrs.path.message);
-      }
-      // check maxVersions is a number
-      if (name === 'maxVersions') {
-        this.mountModel.set('maxVersions', value);
-        this.mountModel.validations.attrs.maxVersions.isValid
-          ? set(this.validationMessages, 'maxVersions', '')
-          : set(
-              this.validationMessages,
-              'maxVersions',
-              this.mountModel.validations.attrs.maxVersions.message
-            );
-      }
-      this.mountModel.validate().then(({ validations }) => {
-        this.set('isFormInvalid', !validations.isValid);
-      });
+      this.mountModel.set(name, value);
     },
+
     onTypeChange(path, value) {
       if (path === 'type') {
         this.wizard.set('componentState', value);

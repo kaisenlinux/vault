@@ -1,3 +1,4 @@
+/* eslint qunit/no-conditional-assertions: "warn" */
 import {
   click,
   findAll,
@@ -97,6 +98,8 @@ module('Acceptance | auth backend list', function (hooks) {
   });
 
   test('auth methods are linkable and link to correct view', async function (assert) {
+    assert.expect(16);
+
     await visit('/vault/access');
 
     let supportManaged = supportedManagedAuthBackends();

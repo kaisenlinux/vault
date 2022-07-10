@@ -1,3 +1,0 @@
-```release-note:bug
-auth/kubernetes: Fix error code when using the wrong service account
-```

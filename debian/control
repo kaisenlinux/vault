@@ -8,6 +8,7 @@ Build-Depends: debhelper-compat (= 13),
 	       golang-golang-x-tools,
 	       gox (>= 1.0.1-1kaisen),
 	       npm,
+	       nodejs,
 Standards-Version: 4.6.0
 Homepage: https://www.vaultproject.io/
 Vcs-Browser: https://gitlab.com/kaisenlinux/packages/vault

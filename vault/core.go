@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/hashicorp/vault/helper/identity/mfa"
 	"github.com/hashicorp/vault/helper/metricsutil"
 	"github.com/hashicorp/vault/helper/namespace"
+	"github.com/hashicorp/vault/helper/osutil"
 	"github.com/hashicorp/vault/physical/raft"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
 	"github.com/hashicorp/vault/sdk/helper/consts"
@@ -494,6 +496,12 @@ type Core struct {
 	// pluginDirectory is the location vault will look for plugin binaries
 	pluginDirectory string
 
+	// pluginFileUid is the uid of the plugin files and directory
+	pluginFileUid int
+
+	// pluginFilePermissions is the permissions of the plugin files and directory
+	pluginFilePermissions int
+
 	// pluginCatalog is used to manage plugin configurations
 	pluginCatalog *PluginCatalog
 
@@ -605,11 +613,12 @@ type Core struct {
 	// disableSSCTokens is used to disable server side consistent token creation/usage
 	disableSSCTokens bool
 
-	// versionTimestamps is a map of vault versions to timestamps when the version
+	// versionHistory is a map of vault versions to VaultVersion. The
+	// VaultVersion.TimestampInstalled when the version will denote when the version
 	// was first run. Note that because perf standbys should be upgraded first, and
 	// only the active node will actually write the new version timestamp, a perf
 	// standby shouldn't rely on the stored version timestamps being present.
-	versionTimestamps map[string]time.Time
+	versionHistory map[string]VaultVersion
 }
 
 func (c *Core) HAState() consts.HAState {
@@ -690,6 +699,10 @@ type CoreConfig struct {
 	EnableRaw bool
 
 	PluginDirectory string
+
+	PluginFileUid int
+
+	PluginFilePermissions int
 
 	DisableSealWrap bool
 
@@ -879,6 +892,7 @@ func CreateCore(conf *CoreConfig) (*Core, error) {
 		mountMigrationTracker:          &sync.Map{},
 		disableSSCTokens:               conf.DisableSSCTokens,
 	}
+
 	c.standbyStopCh.Store(make(chan struct{}))
 	atomic.StoreUint32(c.sealed, 1)
 	c.metricSink.SetGaugeWithLabels([]string{"core", "unsealed"}, 0, nil)
@@ -1005,6 +1019,13 @@ func NewCore(conf *CoreConfig) (*Core, error) {
 		}
 	}
 
+	if conf.PluginFileUid != 0 {
+		c.pluginFileUid = conf.PluginFileUid
+	}
+	if conf.PluginFilePermissions != 0 {
+		c.pluginFilePermissions = conf.PluginFilePermissions
+	}
+
 	createSecondaries(c, conf)
 
 	if conf.HAPhysical != nil && conf.HAPhysical.HAEnabled() {
@@ -1095,9 +1116,9 @@ func NewCore(conf *CoreConfig) (*Core, error) {
 		return nil, err
 	}
 
-	if c.versionTimestamps == nil {
-		c.logger.Info("Initializing versionTimestamps for core")
-		c.versionTimestamps = make(map[string]time.Time)
+	if c.versionHistory == nil {
+		c.logger.Info("Initializing version history cache for core")
+		c.versionHistory = make(map[string]VaultVersion)
 	}
 
 	return c, nil
@@ -1107,15 +1128,22 @@ func NewCore(conf *CoreConfig) (*Core, error) {
 // storage, and then loads all versions and upgrade timestamps out from storage.
 func (c *Core) handleVersionTimeStamps(ctx context.Context) error {
 	currentTime := time.Now().UTC()
-	isUpdated, err := c.storeVersionTimestamp(ctx, version.Version, currentTime, false)
+
+	vaultVersion := &VaultVersion{
+		TimestampInstalled: currentTime,
+		Version:            version.Version,
+		BuildDate:          version.BuildDate,
+	}
+
+	isUpdated, err := c.storeVersionEntry(ctx, vaultVersion, false)
 	if err != nil {
 		return fmt.Errorf("error storing vault version: %w", err)
 	}
 	if isUpdated {
-		c.logger.Info("Recorded vault version", "vault version", version.Version, "upgrade time", currentTime)
+		c.logger.Info("Recorded vault version", "vault version", version.Version, "upgrade time", currentTime, "build date", version.BuildDate)
 	}
-	// Finally, load the versions into core fields
-	err = c.loadVersionTimestamps(ctx)
+	// Finally, populate the version history cache
+	err = c.loadVersionHistory(ctx)
 	if err != nil {
 		return err
 	}
@@ -3225,7 +3253,10 @@ type PeerNode struct {
 	Hostname       string    `json:"hostname"`
 	APIAddress     string    `json:"api_address"`
 	ClusterAddress string    `json:"cluster_address"`
+	Version        string    `json:"version"`
 	LastEcho       time.Time `json:"last_echo"`
+	UpgradeVersion string    `json:"upgrade_version,omitempty"`
+	RedundancyZone string    `json:"redundancy_zone,omitempty"`
 }
 
 // GetHAPeerNodesCached returns the nodes that've sent us Echo requests recently.
@@ -3238,7 +3269,34 @@ func (c *Core) GetHAPeerNodesCached() []PeerNode {
 			APIAddress:     info.nodeInfo.ApiAddr,
 			ClusterAddress: itemClusterAddr,
 			LastEcho:       info.lastHeartbeat,
+			Version:        info.version,
+			UpgradeVersion: info.upgradeVersion,
+			RedundancyZone: info.redundancyZone,
 		})
 	}
 	return nodes
+}
+
+func (c *Core) CheckPluginPerms(pluginName string) (err error) {
+	var enableFilePermissionsCheck bool
+	if enableFilePermissionsCheckEnv := os.Getenv(consts.VaultEnableFilePermissionsCheckEnv); enableFilePermissionsCheckEnv != "" {
+		var err error
+		enableFilePermissionsCheck, err = strconv.ParseBool(enableFilePermissionsCheckEnv)
+		if err != nil {
+			return errors.New("Error parsing the environment variable VAULT_ENABLE_FILE_PERMISSIONS_CHECK")
+		}
+	}
+
+	if c.pluginDirectory != "" && enableFilePermissionsCheck {
+		err = osutil.OwnerPermissionsMatch(c.pluginDirectory, c.pluginFileUid, c.pluginFilePermissions)
+		if err != nil {
+			return err
+		}
+		fullPath := filepath.Join(c.pluginDirectory, pluginName)
+		err = osutil.OwnerPermissionsMatch(fullPath, c.pluginFileUid, c.pluginFilePermissions)
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }

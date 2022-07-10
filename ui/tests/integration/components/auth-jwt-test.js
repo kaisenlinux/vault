@@ -1,5 +1,4 @@
-import { run } from '@ember/runloop';
-import Service from '@ember/service';
+import { _cancelTimers as cancelTimers } from '@ember/runloop';
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'ember-qunit';
 import { render, settled, waitUntil } from '@ember/test-helpers';
@@ -34,12 +33,6 @@ const OIDC_AUTH_RESPONSE = {
   },
 };
 
-const routerStub = Service.extend({
-  urlFor() {
-    return 'http://example.com';
-  },
-});
-
 const renderIt = async (context, path = 'jwt') => {
   let handler = (data, e) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -70,7 +63,11 @@ module('Integration | Component | auth jwt', function (hooks) {
 
   hooks.beforeEach(function () {
     this.openSpy = sinon.spy(fakeWindow.proto(), 'open');
-    this.owner.register('service:router', routerStub);
+    this.owner.lookup('service:router').reopen({
+      urlFor() {
+        return 'http://example.com';
+      },
+    });
     this.server = new Pretender(function () {
       this.get('/v1/auth/:path/oidc/callback', function () {
         return [200, { 'Content-Type': 'application/json' }, JSON.stringify(OIDC_AUTH_RESPONSE)];
@@ -160,7 +157,7 @@ module('Integration | Component | auth jwt', function (hooks) {
     await waitUntil(() => {
       return this.openSpy.calledOnce;
     });
-    run.cancelTimers();
+    cancelTimers();
     let call = this.openSpy.getCall(0);
     assert.deepEqual(
       call.args,
@@ -194,7 +191,7 @@ module('Integration | Component | auth jwt', function (hooks) {
       'message',
       buildMessage({ data: { source: 'oidc-callback', state: 'state', foo: 'bar' } })
     );
-    run.cancelTimers();
+    cancelTimers();
     assert.equal(this.error, ERROR_MISSING_PARAMS, 'calls onError with params missing error');
   });
 
@@ -221,7 +218,7 @@ module('Integration | Component | auth jwt', function (hooks) {
       return this.openSpy.calledOnce;
     });
     this.window.trigger('message', buildMessage({ origin: 'http://hackerz.com' }));
-    run.cancelTimers();
+    cancelTimers();
     await settled();
     assert.notOk(this.handler.called, 'should not call the submit handler');
   });
@@ -235,7 +232,7 @@ module('Integration | Component | auth jwt', function (hooks) {
       return this.openSpy.calledOnce;
     });
     this.window.trigger('message', buildMessage({ isTrusted: false }));
-    run.cancelTimers();
+    cancelTimers();
     await settled();
     assert.notOk(this.handler.called, 'should not call the submit handler');
   });

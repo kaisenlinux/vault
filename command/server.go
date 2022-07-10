@@ -34,6 +34,7 @@ import (
 	config2 "github.com/hashicorp/vault/command/config"
 	"github.com/hashicorp/vault/command/server"
 	"github.com/hashicorp/vault/helper/builtinplugins"
+	"github.com/hashicorp/vault/helper/constants"
 	"github.com/hashicorp/vault/helper/metricsutil"
 	"github.com/hashicorp/vault/helper/namespace"
 	vaulthttp "github.com/hashicorp/vault/http"
@@ -189,9 +190,9 @@ func (c *ServerCommand) Flags() *FlagSets {
 		Target:     &c.flagLogLevel,
 		Default:    notSetValue,
 		EnvVar:     "VAULT_LOG_LEVEL",
-		Completion: complete.PredictSet("trace", "debug", "info", "warn", "err"),
+		Completion: complete.PredictSet("trace", "debug", "info", "warn", "error"),
 		Usage: "Log verbosity level. Supported values (in order of detail) are " +
-			"\"trace\", \"debug\", \"info\", \"warn\", and \"err\".",
+			"\"trace\", \"debug\", \"info\", \"warn\", and \"error\".",
 	})
 
 	f.StringVar(&StringVar{
@@ -424,6 +425,12 @@ func (c *ServerCommand) parseConfig() (*server.Config, []configutil.ConfigError,
 			config = config.Merge(current)
 		}
 	}
+
+	if config != nil && config.Entropy != nil && config.Entropy.Mode == configutil.EntropyAugmentation && constants.IsFIPS() {
+		c.UI.Warn("WARNING: Entropy Augmentation is not supported in FIPS 140-2 Inside mode; disabling from server configuration!\n")
+		config.Entropy = nil
+	}
+
 	return config, configErrors, nil
 }
 
@@ -2521,6 +2528,8 @@ func createCoreConfig(c *ServerCommand, config *server.Config, backend physical.
 		ClusterName:                    config.ClusterName,
 		CacheSize:                      config.CacheSize,
 		PluginDirectory:                config.PluginDirectory,
+		PluginFileUid:                  config.PluginFileUid,
+		PluginFilePermissions:          config.PluginFilePermissions,
 		EnableUI:                       config.EnableUI,
 		EnableRaw:                      config.EnableRawEndpoint,
 		DisableSealWrap:                config.DisableSealWrap,
@@ -2538,6 +2547,7 @@ func createCoreConfig(c *ServerCommand, config *server.Config, backend physical.
 		LicensePath:                    config.LicensePath,
 		DisableSSCTokens:               config.DisableSSCTokens,
 	}
+
 	if c.flagDev {
 		coreConfig.EnableRaw = true
 		coreConfig.DevToken = c.flagDevRootTokenID

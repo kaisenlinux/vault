@@ -74,7 +74,6 @@ func (a *Alias) SentinelKeys() []string {
 	return []string{
 		"id",
 		"mount_type",
-		"mount_accessor",
 		"mount_path",
 		"meta",
 		"metadata",

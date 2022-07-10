@@ -4,7 +4,7 @@ import { click, visit, fillIn } from '@ember/test-helpers';
 import { setupMirage } from 'ember-cli-mirage/test-support';
 import { fakeWindow, buildMessage } from '../helpers/oidc-window-stub';
 import sinon from 'sinon';
-import { later, run } from '@ember/runloop';
+import { later, _cancelTimers as cancelTimers } from '@ember/runloop';
 
 module('Acceptance | oidc auth method', function (hooks) {
   setupApplicationTest(hooks);
@@ -35,7 +35,7 @@ module('Acceptance | oidc auth method', function (hooks) {
     }
     later(() => {
       window.postMessage(buildMessage().data, window.origin);
-      run.cancelTimers();
+      cancelTimers();
     }, 50);
     await click('[data-test-auth-submit]');
   };
@@ -52,7 +52,7 @@ module('Acceptance | oidc auth method', function (hooks) {
   });
 
   test('it should login with oidc from listed auth mount tab', async function (assert) {
-    assert.expect(2);
+    assert.expect(3);
 
     this.server.get('/sys/internal/ui/mounts', () => ({
       data: {
@@ -61,13 +61,11 @@ module('Acceptance | oidc auth method', function (hooks) {
         },
       },
     }));
-    let didAssert;
+    // this request is fired twice -- total assertion count should be 3 rather than 2
+    // JLR TODO - auth-jwt: verify whether additional request is necessary, especially when glimmerizing component
+    // look into whether didReceiveAttrs is necessary to trigger this request
     this.server.post('/auth/test-path/oidc/auth_url', () => {
-      // request may be fired more than once -- we are only concerned if the endpoint is hit, not how many times
-      if (!didAssert) {
-        assert.ok(true, 'auth_url request made to correct non-standard mount path');
-        didAssert = true;
-      }
+      assert.ok(true, 'auth_url request made to correct non-standard mount path');
       return { data: { auth_url: 'http://example.com' } };
     });
     // there was a bug that would result in the /auth/:path/login endpoint hit with an empty payload rather than lookup-self

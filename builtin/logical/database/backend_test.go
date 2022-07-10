@@ -14,9 +14,6 @@ import (
 
 	"github.com/go-test/deep"
 	mongodbatlas "github.com/hashicorp/vault-plugin-database-mongodbatlas"
-	"github.com/lib/pq"
-	"github.com/mitchellh/mapstructure"
-
 	"github.com/hashicorp/vault/helper/namespace"
 	postgreshelper "github.com/hashicorp/vault/helper/testhelpers/postgresql"
 	vaulthttp "github.com/hashicorp/vault/http"
@@ -30,6 +27,8 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault"
+	_ "github.com/jackc/pgx/v4"
+	"github.com/mitchellh/mapstructure"
 )
 
 func getCluster(t *testing.T) (*vault.TestCluster, logical.SystemView) {
@@ -50,8 +49,11 @@ func getCluster(t *testing.T) (*vault.TestCluster, logical.SystemView) {
 
 	sys := vault.TestDynamicSystemView(cores[0].Core, nil)
 	vault.TestAddTestPlugin(t, cores[0].Core, "postgresql-database-plugin", consts.PluginTypeDatabase, "TestBackend_PluginMain_Postgres", []string{}, "")
+	vault.TestAddTestPlugin(t, cores[0].Core, "postgresql-database-plugin-muxed", consts.PluginTypeDatabase, "TestBackend_PluginMain_PostgresMultiplexed", []string{}, "")
 	vault.TestAddTestPlugin(t, cores[0].Core, "mongodb-database-plugin", consts.PluginTypeDatabase, "TestBackend_PluginMain_Mongo", []string{}, "")
+	vault.TestAddTestPlugin(t, cores[0].Core, "mongodb-database-plugin-muxed", consts.PluginTypeDatabase, "TestBackend_PluginMain_MongoMultiplexed", []string{}, "")
 	vault.TestAddTestPlugin(t, cores[0].Core, "mongodbatlas-database-plugin", consts.PluginTypeDatabase, "TestBackend_PluginMain_MongoAtlas", []string{}, "")
+	vault.TestAddTestPlugin(t, cores[0].Core, "mongodbatlas-database-plugin-muxed", consts.PluginTypeDatabase, "TestBackend_PluginMain_MongoAtlasMultiplexed", []string{}, "")
 
 	return cluster, sys
 }
@@ -69,6 +71,14 @@ func TestBackend_PluginMain_Postgres(t *testing.T) {
 	v5.Serve(dbType.(v5.Database))
 }
 
+func TestBackend_PluginMain_PostgresMultiplexed(t *testing.T) {
+	if os.Getenv(pluginutil.PluginVaultVersionEnv) == "" {
+		return
+	}
+
+	v5.ServeMultiplex(postgresql.New)
+}
+
 func TestBackend_PluginMain_Mongo(t *testing.T) {
 	if os.Getenv(pluginutil.PluginVaultVersionEnv) == "" {
 		return
@@ -82,6 +92,14 @@ func TestBackend_PluginMain_Mongo(t *testing.T) {
 	v5.Serve(dbType.(v5.Database))
 }
 
+func TestBackend_PluginMain_MongoMultiplexed(t *testing.T) {
+	if os.Getenv(pluginutil.PluginVaultVersionEnv) == "" {
+		return
+	}
+
+	v5.ServeMultiplex(mongodb.New)
+}
+
 func TestBackend_PluginMain_MongoAtlas(t *testing.T) {
 	if os.Getenv(pluginutil.PluginUnwrapTokenEnv) == "" {
 		return
@@ -93,6 +111,14 @@ func TestBackend_PluginMain_MongoAtlas(t *testing.T) {
 	}
 
 	v5.Serve(dbType.(v5.Database))
+}
+
+func TestBackend_PluginMain_MongoAtlasMultiplexed(t *testing.T) {
+	if os.Getenv(pluginutil.PluginUnwrapTokenEnv) == "" {
+		return
+	}
+
+	v5.ServeMultiplex(mongodbatlas.New)
 }
 
 func TestBackend_RoleUpgrade(t *testing.T) {
@@ -662,7 +688,7 @@ func TestBackend_connectionCrud(t *testing.T) {
 	if err != nil || (resp != nil && resp.IsError()) {
 		t.Fatalf("err:%s resp:%#v\n", err, resp)
 	}
-	if len(resp.Warnings) != 1 {
+	if len(resp.Warnings) == 0 {
 		t.Fatalf("expected warning about password in url %s, resp:%#v\n", connURL, resp)
 	}
 
@@ -1445,14 +1471,8 @@ func testCredsExist(t *testing.T, resp *logical.Response, connURL string) bool {
 		t.Fatal(err)
 	}
 	log.Printf("[TRACE] Generated credentials: %v", d)
-	conn, err := pq.ParseURL(connURL)
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	conn += " timezone=utc"
-
-	db, err := sql.Open("postgres", conn)
+	db, err := sql.Open("pgx", connURL+"&timezone=utc")
 	if err != nil {
 		t.Fatal(err)
 	}
