@@ -1,3 +1,0 @@
-```release-note:bug
-database/elasticsearch: Fixes a bug in boolean parsing for initialize
-```

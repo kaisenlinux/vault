@@ -21,7 +21,7 @@ const disableReplication = async (type, assert) => {
     await click('[data-test-disable-replication] button');
 
     const typeDisplay = type === 'dr' ? 'Disaster Recovery' : 'Performance';
-    await fillIn('[data-test-confirmation-modal-input="disable"]', typeDisplay);
+    await fillIn('[data-test-confirmation-modal-input="Disable Replication?"]', typeDisplay);
     await click('[data-test-confirm-button]');
     await settled(); // eslint-disable-line
 
@@ -277,7 +277,7 @@ module('Acceptance | Enterprise | replication', function (hooks) {
     assert.dom('#modal-wormhole').exists();
     assert.equal(modalDefaultTtl, '1800s', 'shows the correct TTL of 1800s');
     // click off the modal to make sure you don't just have to click on the copy-close button to copy the token
-    await click('[data-test-modal-background]');
+    await click('[data-test-modal-background="Copy your token"]');
 
     // add another secondary not using the default ttl
     await click('[data-test-secondary-add]');
@@ -292,7 +292,7 @@ module('Acceptance | Enterprise | replication', function (hooks) {
     await settled();
     let modalTtl = document.querySelector('[data-test-row-value="TTL"]').innerText;
     assert.equal(modalTtl, '180s', 'shows the correct TTL of 180s');
-    await click('[data-test-modal-background]');
+    await click('[data-test-modal-background="Copy your token"]');
 
     // confirm you were redirected to the secondaries page
     assert.equal(
@@ -367,9 +367,9 @@ module('Acceptance | Enterprise | replication', function (hooks) {
     await click('[data-test-demote-replication] [data-test-replication-action-trigger]');
 
     // enter confirmation text
-    await fillIn('[data-test-confirmation-modal-input="demote"]', 'Performance');
+    await fillIn('[data-test-confirmation-modal-input="Demote to secondary?"]', 'Performance');
     // Click confirm button
-    await click('[data-test-confirm-button="demote"]');
+    await click('[data-test-confirm-button="Demote to secondary?"]');
 
     await click('[data-test-replication-link="details"]');
 

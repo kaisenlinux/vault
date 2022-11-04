@@ -1,19 +1,19 @@
 #!/usr/bin/make -f
 
-export GOPATH=$(CURDIR)/obj-x86_64-linux-gnu
-export GOBIN=$(CURDIR)/obj-x86_64-linux-gnu/bin
+export GOPATH=$(CURDIR)/_build
+export GOBIN=$(CURDIR)/_build/bin
 export GO111MODULE=on
-export NODE_OPTIONS=--openssl-legacy-provider
+#export NODE_OPTIONS=--openssl-legacy-provider
 
 %:
 	dh $@ --buildsystem=golang
 
 override_dh_auto_clean:
-	rm -rf $(CURDIR)/obj-x86_64-linux-gnu
+	rm -rf $(CURDIR)/_build
 
 override_dh_auto_build:
 	#Install the latest yarn version in $GOPATH
-	npm install --global yarn --prefix $(CURDIR)/obj-x86_64-linux-gnu
+	npm install --global yarn --prefix $(CURDIR)/_build
 	#Building vault...
 	make bootstrap
 	make version
@@ -28,7 +28,6 @@ override_dh_auto_build:
 	make static-dist
 	make assetcheck
 	make bin
-	make test
 	
 override_dh_auto_test:
 	go test

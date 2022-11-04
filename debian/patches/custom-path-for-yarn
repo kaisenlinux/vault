@@ -1,45 +1,39 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.11.0.orig/Makefile
-+++ vault-1.11.0/Makefile
-@@ -141,15 +141,15 @@ static-assets-dir:
+--- vault-1.12.1.orig/Makefile
++++ vault-1.12.1/Makefile
+@@ -142,15 +142,15 @@ static-assets-dir:
  
  install-ui-dependencies:
  	@echo "--> Installing JavaScript assets"
 -	@cd ui && yarn --ignore-optional
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn --ignore-optional
++	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn --ignore-optional
  
  test-ember: install-ui-dependencies
  	@echo "--> Running ember tests"
 -	@cd ui && yarn run test:oss
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run test:oss
++	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run test:oss
  
  test-ember-enos: install-ui-dependencies
  	@echo "--> Running ember tests with a real backend"
 -	@cd ui && yarn run test:enos
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run test:enos
++	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run test:enos
  
- ember-ci-test: # Deprecated, to be removed soon.
- 	@echo "ember-ci-test is deprecated in favour of test-ui-browserstack"
-@@ -166,18 +166,18 @@ check-browserstack-creds:
- 
- test-ui-browserstack: check-vault-in-path check-browserstack-creds install-ui-dependencies
- 	@echo "--> Running ember tests in Browserstack"
--	@cd ui && yarn run test:browserstack
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run test:browserstack
- 
+ check-vault-in-path:
+ 	@VAULT_BIN=$$(command -v vault) || { echo "vault command not found"; exit 1; }; \
+@@ -160,13 +160,13 @@ check-vault-in-path:
  ember-dist: install-ui-dependencies
  	@cd ui && npm rebuild node-sass
  	@echo "--> Building Ember application"
 -	@cd ui && yarn run build
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run build
++	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run build
  	@rm -rf ui/if-you-need-to-delete-this-open-an-issue-async-disk-cache
  
  ember-dist-dev: install-ui-dependencies
  	@cd ui && npm rebuild node-sass
  	@echo "--> Building Ember application"
 -	@cd ui && yarn run build:dev
-+	@cd ui && $(CURDIR)/obj-x86_64-linux-gnu/lib/node_modules/yarn/bin/yarn run build:dev
++	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run build:dev
  
  static-dist: ember-dist
  static-dist-dev: ember-dist-dev

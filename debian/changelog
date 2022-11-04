@@ -1,3 +1,14 @@
+vault (1.12.1-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.12.1 version
+  * Refresh the following quilt patches:
+    - custom-yarn-for-build
+    - kaisen-rules-for-build
+  * Move the value of the GOPATH and GOBIN variable in _build
+    instead of obj-x86_64-linux-gnu
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Thu, 03 Nov 2022 13:35:39 +0100
+
 vault (1.11.3-1kaisen) kaisen-packages; urgency=medium
 
   * Import 1.11.3 version

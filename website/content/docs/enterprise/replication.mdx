@@ -26,7 +26,7 @@ applications that need to interoperate.
 Vault replication addresses both of these needs in providing consistency,
 scalability, and highly-available disaster recovery.
 
-Note: Using replication requires a storage backend that supports transactional updates, such as Consul.
+Note: Using replication requires a storage backend that supports transactional updates, such as [Integrated Storage](/docs/concepts/integrated-storage) or Consul.
 
 ## Architecture
 
@@ -219,6 +219,13 @@ generation until it is used.
 
 Once a secondary is activated, its cluster information is stored safely behind
 its encrypted barrier.
+
+## Mutual TLS and Load Balancers
+
+Vault generates its own certificates for cluster members. All replication traffic 
+uses the cluster port using these Vault-generated certificates after initial 
+bootstrapping. Because of this, the cluster traffic can NOT be terminated at the 
+cluster port at a load balancer level.
 
 ## Tutorial
 

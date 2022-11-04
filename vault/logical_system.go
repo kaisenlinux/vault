@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"hash"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -21,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/hashicorp/vault/helper/versions"
 	"golang.org/x/crypto/sha3"
 
 	"github.com/hashicorp/errwrap"
@@ -29,6 +29,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/go-secure-stdlib/strutil"
+	semver "github.com/hashicorp/go-version"
 	"github.com/hashicorp/vault/helper/hostutil"
 	"github.com/hashicorp/vault/helper/identity"
 	"github.com/hashicorp/vault/helper/metricsutil"
@@ -38,6 +39,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
+	"github.com/hashicorp/vault/sdk/helper/pluginutil"
 	"github.com/hashicorp/vault/sdk/helper/wrapping"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/sdk/version"
@@ -82,7 +84,8 @@ func NewSystemBackend(core *Core, logger log.Logger) *SystemBackend {
 	}
 
 	b.Backend = &framework.Backend{
-		Help: strings.TrimSpace(sysHelpRoot),
+		RunningVersion: versions.DefaultBuiltinVersion,
+		Help:           strings.TrimSpace(sysHelpRoot),
 
 		PathsSpecial: &logical.Paths{
 			Root: []string{
@@ -399,11 +402,13 @@ func (b *SystemBackend) handlePluginCatalogTypedList(ctx context.Context, req *l
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(plugins)
 	return logical.ListResponse(plugins), nil
 }
 
-func (b *SystemBackend) handlePluginCatalogUntypedList(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	pluginsByType := make(map[string]interface{})
+func (b *SystemBackend) handlePluginCatalogUntypedList(ctx context.Context, _ *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
+	data := make(map[string]interface{})
+	var versionedPlugins []pluginutil.VersionedPlugin
 	for _, pluginType := range consts.PluginTypes {
 		plugins, err := b.Core.pluginCatalog.List(ctx, pluginType)
 		if err != nil {
@@ -411,15 +416,47 @@ func (b *SystemBackend) handlePluginCatalogUntypedList(ctx context.Context, req 
 		}
 		if len(plugins) > 0 {
 			sort.Strings(plugins)
-			pluginsByType[pluginType.String()] = plugins
+			data[pluginType.String()] = plugins
 		}
+
+		versioned, err := b.Core.pluginCatalog.ListVersionedPlugins(ctx, pluginType)
+		if err != nil {
+			return nil, err
+		}
+
+		// Sort for consistent ordering
+		sortVersionedPlugins(versioned)
+
+		versionedPlugins = append(versionedPlugins, versioned...)
 	}
+
+	if len(versionedPlugins) != 0 {
+		data["detailed"] = versionedPlugins
+	}
+
 	return &logical.Response{
-		Data: pluginsByType,
+		Data: data,
 	}, nil
 }
 
-func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+func sortVersionedPlugins(versionedPlugins []pluginutil.VersionedPlugin) {
+	sort.SliceStable(versionedPlugins, func(i, j int) bool {
+		left, right := versionedPlugins[i], versionedPlugins[j]
+		if left.Type != right.Type {
+			return left.Type < right.Type
+		}
+		if left.Name != right.Name {
+			return left.Name < right.Name
+		}
+		if left.Version != right.Version {
+			return right.SemanticVersion.GreaterThan(left.SemanticVersion)
+		}
+
+		return false
+	})
+}
+
+func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, _ *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	pluginName := d.Get("name").(string)
 	if pluginName == "" {
 		return logical.ErrorResponse("missing plugin name"), nil
@@ -434,6 +471,14 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, req *logi
 	pluginType, err := consts.ParsePluginType(pluginTypeStr)
 	if err != nil {
 		return nil, err
+	}
+
+	pluginVersion, builtin, err := getVersion(d)
+	if err != nil {
+		return logical.ErrorResponse(err.Error()), nil
+	}
+	if builtin {
+		return logical.ErrorResponse("version %q is not allowed because 'builtin' is a reserved metadata identifier", pluginVersion), nil
 	}
 
 	sha256 := d.Get("sha256").(string)
@@ -472,15 +517,18 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, req *logi
 		return logical.ErrorResponse("Could not decode SHA-256 value from Hex"), err
 	}
 
-	err = b.Core.pluginCatalog.Set(ctx, pluginName, pluginType, parts[0], args, env, sha256Bytes)
+	err = b.Core.pluginCatalog.Set(ctx, pluginName, pluginType, pluginVersion, parts[0], args, env, sha256Bytes)
 	if err != nil {
+		if errors.Is(err, ErrPluginNotFound) || strings.HasPrefix(err.Error(), "plugin version mismatch") {
+			return logical.ErrorResponse(err.Error()), nil
+		}
 		return nil, err
 	}
 
 	return nil, nil
 }
 
-func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, _ *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	pluginName := d.Get("name").(string)
 	if pluginName == "" {
 		return logical.ErrorResponse("missing plugin name"), nil
@@ -501,7 +549,12 @@ func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, req *logica
 		return nil, err
 	}
 
-	plugin, err := b.Core.pluginCatalog.Get(ctx, pluginName, pluginType)
+	pluginVersion, _, err := getVersion(d)
+	if err != nil {
+		return logical.ErrorResponse(err.Error()), nil
+	}
+
+	plugin, err := b.Core.pluginCatalog.Get(ctx, pluginName, pluginType, pluginVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -523,6 +576,12 @@ func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, req *logica
 		"command": command,
 		"sha256":  hex.EncodeToString(plugin.Sha256),
 		"builtin": plugin.Builtin,
+		"version": plugin.Version,
+	}
+
+	if plugin.Builtin {
+		status, _ := b.Core.builtinRegistry.DeprecationStatus(plugin.Name, plugin.Type)
+		data["deprecation_status"] = status.String()
 	}
 
 	return &logical.Response{
@@ -530,10 +589,18 @@ func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, req *logica
 	}, nil
 }
 
-func (b *SystemBackend) handlePluginCatalogDelete(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+func (b *SystemBackend) handlePluginCatalogDelete(ctx context.Context, _ *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	pluginName := d.Get("name").(string)
 	if pluginName == "" {
 		return logical.ErrorResponse("missing plugin name"), nil
+	}
+
+	pluginVersion, builtin, err := getVersion(d)
+	if err != nil {
+		return logical.ErrorResponse(err.Error()), nil
+	}
+	if builtin {
+		return logical.ErrorResponse("version %q cannot be deleted", pluginVersion), nil
 	}
 
 	var resp *logical.Response
@@ -552,11 +619,35 @@ func (b *SystemBackend) handlePluginCatalogDelete(ctx context.Context, req *logi
 	if err != nil {
 		return nil, err
 	}
-	if err := b.Core.pluginCatalog.Delete(ctx, pluginName, pluginType); err != nil {
+	if err := b.Core.pluginCatalog.Delete(ctx, pluginName, pluginType, pluginVersion); err != nil {
 		return nil, err
 	}
 
 	return resp, nil
+}
+
+func getVersion(d *framework.FieldData) (version string, builtin bool, err error) {
+	version = d.Get("version").(string)
+	if version != "" {
+		semanticVersion, err := semver.NewSemver(version)
+		if err != nil {
+			return "", false, fmt.Errorf("version %q is not a valid semantic version: %w", version, err)
+		}
+
+		metadataIdentifiers := strings.Split(semanticVersion.Metadata(), ".")
+		for _, identifier := range metadataIdentifiers {
+			if identifier == "builtin" {
+				builtin = true
+				break
+			}
+		}
+
+		// Canonicalize the version string.
+		// Add the 'v' back in, since semantic version strips it out, and we want to be consistent with internal plugins.
+		version = "v" + semanticVersion.String()
+	}
+
+	return version, builtin, nil
 }
 
 func (b *SystemBackend) handlePluginReloadUpdate(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
@@ -811,7 +902,7 @@ func (b *SystemBackend) handleRekeyDeleteRecovery(ctx context.Context, req *logi
 	return b.handleRekeyDelete(ctx, req, data, true)
 }
 
-func mountInfo(entry *MountEntry) map[string]interface{} {
+func (b *SystemBackend) mountInfo(ctx context.Context, entry *MountEntry) map[string]interface{} {
 	info := map[string]interface{}{
 		"type":                    entry.Type,
 		"description":             entry.Description,
@@ -821,6 +912,9 @@ func mountInfo(entry *MountEntry) map[string]interface{} {
 		"external_entropy_access": entry.ExternalEntropyAccess,
 		"options":                 entry.Options,
 		"uuid":                    entry.UUID,
+		"plugin_version":          entry.Version,
+		"running_plugin_version":  entry.RunningVersion,
+		"running_sha256":          entry.RunningSha256,
 	}
 	entryConfig := map[string]interface{}{
 		"default_lease_ttl": int64(entry.Config.DefaultLeaseTTL.Seconds()),
@@ -851,6 +945,11 @@ func mountInfo(entry *MountEntry) map[string]interface{} {
 		entryConfig["token_type"] = entry.Config.TokenType.String()
 	}
 
+	// Add deprecation status only if it exists
+	builtinType := b.Core.builtinTypeFromMountEntry(ctx, entry)
+	if status, ok := b.Core.builtinRegistry.DeprecationStatus(entry.Type, builtinType); ok {
+		info["deprecation_status"] = status.String()
+	}
 	info["config"] = entryConfig
 
 	return info
@@ -885,7 +984,8 @@ func (b *SystemBackend) handleMountTable(ctx context.Context, req *logical.Reque
 		}
 
 		// Populate mount info
-		info := mountInfo(entry)
+		info := b.mountInfo(ctx, entry)
+
 		resp.Data[entry.Path] = info
 	}
 
@@ -1019,6 +1119,11 @@ func (b *SystemBackend) handleMount(ctx context.Context, req *logical.Request, d
 		}
 	}
 
+	pluginVersion, resp, err := b.validateVersion(ctx, apiConfig.PluginVersion, logicalType, consts.PluginTypeSecrets)
+	if resp != nil || err != nil {
+		return resp, err
+	}
+
 	// Copy over the force no cache if set
 	if apiConfig.ForceNoCache {
 		config.ForceNoCache = true
@@ -1056,6 +1161,13 @@ func (b *SystemBackend) handleMount(ctx context.Context, req *logical.Request, d
 		SealWrap:              sealWrap,
 		ExternalEntropyAccess: externalEntropyAccess,
 		Options:               options,
+		Version:               pluginVersion,
+	}
+
+	// Detect and handle deprecated secrets engines
+	resp, err = b.Core.handleDeprecatedMountEntry(ctx, me, consts.PluginTypeSecrets)
+	if err != nil {
+		return handleError(err)
 	}
 
 	// Attempt mount
@@ -1064,7 +1176,40 @@ func (b *SystemBackend) handleMount(ctx context.Context, req *logical.Request, d
 		return handleError(err)
 	}
 
-	return nil, nil
+	return resp, nil
+}
+
+func selectPluginVersion(ctx context.Context, sys logical.SystemView, pluginName string, pluginType consts.PluginType) (string, error) {
+	unversionedPlugin, err := sys.LookupPlugin(ctx, pluginName, pluginType)
+	if err == nil && !unversionedPlugin.Builtin {
+		// We'll select the unversioned plugin that's been registered.
+		return "", nil
+	}
+
+	// No version provided and no unversioned plugin of that name available.
+	// Pin to the current latest version if any versioned plugins are registered.
+	plugins, err := sys.ListVersionedPlugins(ctx, pluginType)
+	if err != nil {
+		return "", err
+	}
+
+	var versionedCandidates []pluginutil.VersionedPlugin
+	for _, plugin := range plugins {
+		if !plugin.Builtin && plugin.Name == pluginName && plugin.Version != "" {
+			versionedCandidates = append(versionedCandidates, plugin)
+		}
+	}
+
+	if len(versionedCandidates) != 0 {
+		// Sort in reverse order.
+		sort.SliceStable(versionedCandidates, func(i, j int) bool {
+			return versionedCandidates[i].SemanticVersion.GreaterThan(versionedCandidates[j].SemanticVersion)
+		})
+
+		return "v" + versionedCandidates[0].SemanticVersion.String(), nil
+	}
+
+	return "", nil
 }
 
 func (b *SystemBackend) handleReadMount(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
@@ -1078,7 +1223,7 @@ func (b *SystemBackend) handleReadMount(ctx context.Context, req *logical.Reques
 	}
 
 	return &logical.Response{
-		Data: mountInfo(entry),
+		Data: b.mountInfo(ctx, entry),
 	}, nil
 }
 
@@ -1463,6 +1608,10 @@ func (b *SystemBackend) handleTuneReadCommon(ctx context.Context, path string) (
 		resp.Data["options"] = mountEntry.Options
 	}
 
+	if mountEntry.Version != "" {
+		resp.Data["plugin_version"] = mountEntry.Version
+	}
+
 	return resp, nil
 }
 
@@ -1594,6 +1743,43 @@ func (b *SystemBackend) handleTuneWriteCommon(ctx context.Context, path string, 
 		}
 		if b.Core.logger.IsInfo() {
 			b.Core.logger.Info("mount tuning of description successful", "path", path, "description", description)
+		}
+	}
+
+	if rawVal, ok := data.GetOk("plugin_version"); ok {
+		version := rawVal.(string)
+		semanticVersion, err := semver.NewVersion(version)
+		if err != nil {
+			return logical.ErrorResponse("version %q is not a valid semantic version: %s", version, err), nil
+		}
+		version = "v" + semanticVersion.String()
+
+		// Lookup the version to ensure it exists in the catalog before committing.
+		pluginType := consts.PluginTypeSecrets
+		if strings.HasPrefix(path, "auth/") {
+			pluginType = consts.PluginTypeCredential
+		}
+		_, err = b.System().LookupPluginVersion(ctx, mountEntry.Type, pluginType, version)
+		if err != nil {
+			return handleError(err)
+		}
+
+		oldVersion := mountEntry.Version
+		mountEntry.Version = version
+
+		// Update the mount table
+		switch {
+		case strings.HasPrefix(path, "auth/"):
+			err = b.Core.persistAuth(ctx, b.Core.auth, &mountEntry.Local)
+		default:
+			err = b.Core.persistMounts(ctx, b.Core.mounts, &mountEntry.Local)
+		}
+		if err != nil {
+			mountEntry.Version = oldVersion
+			return handleError(err)
+		}
+		if b.Core.logger.IsInfo() {
+			b.Core.logger.Info("mount tuning of version successful", "path", path, "version", version)
 		}
 	}
 
@@ -2068,7 +2254,7 @@ func (b *SystemBackend) handleAuthTable(ctx context.Context, req *logical.Reques
 			continue
 		}
 
-		info := mountInfo(entry)
+		info := b.mountInfo(ctx, entry)
 		resp.Data[entry.Path] = info
 	}
 
@@ -2102,7 +2288,7 @@ func (b *SystemBackend) handleReadAuth(ctx context.Context, req *logical.Request
 		}
 
 		return &logical.Response{
-			Data: mountInfo(entry),
+			Data: b.mountInfo(ctx, entry),
 		}, nil
 	}
 
@@ -2249,6 +2435,11 @@ func (b *SystemBackend) handleEnableAuth(ctx context.Context, req *logical.Reque
 		}
 	}
 
+	pluginVersion, response, err := b.validateVersion(ctx, apiConfig.PluginVersion, logicalType, consts.PluginTypeCredential)
+	if response != nil || err != nil {
+		return response, err
+	}
+
 	if options != nil && options["version"] != "" {
 		return logical.ErrorResponse(fmt.Sprintf(
 				"auth method %q does not allow setting a version", logicalType)),
@@ -2287,6 +2478,12 @@ func (b *SystemBackend) handleEnableAuth(ctx context.Context, req *logical.Reque
 		SealWrap:              sealWrap,
 		ExternalEntropyAccess: externalEntropyAccess,
 		Options:               options,
+		Version:               pluginVersion,
+	}
+
+	resp, err := b.Core.handleDeprecatedMountEntry(ctx, me, consts.PluginTypeCredential)
+	if err != nil {
+		return handleError(err)
 	}
 
 	// Attempt enabling
@@ -2294,7 +2491,58 @@ func (b *SystemBackend) handleEnableAuth(ctx context.Context, req *logical.Reque
 		b.Backend.Logger().Error("error occurred during enable credential", "path", me.Path, "error", err)
 		return handleError(err)
 	}
-	return nil, nil
+	return resp, nil
+}
+
+func (b *SystemBackend) validateVersion(ctx context.Context, version string, pluginName string, pluginType consts.PluginType) (string, *logical.Response, error) {
+	switch version {
+	case "":
+		var err error
+		version, err = selectPluginVersion(ctx, b.System(), pluginName, pluginType)
+		if err != nil {
+			return "", nil, err
+		}
+
+		if version != "" {
+			b.logger.Debug("pinning plugin version", "plugin type", pluginType.String(), "plugin name", pluginName, "plugin version", version)
+		}
+	default:
+		semanticVersion, err := semver.NewVersion(version)
+		if err != nil {
+			return "", logical.ErrorResponse("version %q is not a valid semantic version: %s", version, err), nil
+		}
+
+		// Canonicalize the version.
+		version = "v" + semanticVersion.String()
+	}
+
+	// if a non-builtin version is requested for a builtin plugin, return an error
+	if version != "" {
+		switch pluginType {
+		case consts.PluginTypeSecrets:
+			aliased, ok := mountAliases[pluginName]
+			if ok {
+				pluginName = aliased
+			}
+			if _, ok = b.Core.logicalBackends[pluginName]; ok {
+				if version != versions.GetBuiltinVersion(pluginType, pluginName) {
+					return "", logical.ErrorResponse("cannot select non-builtin version of secrets plugin %s", pluginName), nil
+				}
+			}
+		case consts.PluginTypeCredential:
+			aliased, ok := credentialAliases[pluginName]
+			if ok {
+				pluginName = aliased
+			}
+			if _, ok = b.Core.credentialBackends[pluginName]; ok {
+				if version != versions.GetBuiltinVersion(pluginType, pluginName) {
+					return "", logical.ErrorResponse("cannot select non-builtin version of auth plugin %s", pluginName), nil
+				}
+			}
+		}
+	}
+
+	return version, nil, nil
 }
 
 // handleDisableAuth is used to disable a credential backend
@@ -3404,13 +3652,23 @@ func (b *SystemBackend) handleWrappingLookup(ctx context.Context, req *logical.R
 		return nil, errors.New("token is not a valid unwrap token")
 	}
 
+	lookupNS, err := NamespaceByID(ctx, te.NamespaceID, b.Core)
+	if err != nil {
+		return nil, err
+	}
+	if lookupNS == nil {
+		return nil, errors.New("token is not from a valid namespace")
+	}
+
+	lookupCtx := namespace.ContextWithNamespace(ctx, lookupNS)
+
 	cubbyReq := &logical.Request{
 		Operation:   logical.ReadOperation,
 		Path:        "cubbyhole/wrapinfo",
 		ClientToken: token,
 	}
 	cubbyReq.SetTokenEntry(te)
-	cubbyResp, err := b.Core.router.Route(ctx, cubbyReq)
+	cubbyResp, err := b.Core.router.Route(lookupCtx, cubbyReq)
 	if err != nil {
 		return nil, fmt.Errorf("error looking up wrapping information: %w", err)
 	}
@@ -3724,7 +3982,11 @@ func (b *SystemBackend) pathInternalUIMountsRead(ctx context.Context, req *logic
 		}
 
 		if isAuthed {
-			return hasMountAccess(ctx, acl, me.Namespace().Path+me.Path)
+			if me.Table == "auth" {
+				return hasMountAccess(ctx, acl, me.Namespace().Path+me.Table+"/"+me.Path)
+			} else {
+				return hasMountAccess(ctx, acl, me.Namespace().Path+me.Path)
+			}
 		}
 
 		return false
@@ -3745,7 +4007,7 @@ func (b *SystemBackend) pathInternalUIMountsRead(ctx context.Context, req *logic
 		if ns.ID == entry.NamespaceID && hasAccess(ctx, entry) {
 			if isAuthed {
 				// If this is an authed request return all the mount info
-				secretMounts[entry.Path] = mountInfo(entry)
+				secretMounts[entry.Path] = b.mountInfo(ctx, entry)
 			} else {
 				secretMounts[entry.Path] = map[string]interface{}{
 					"type":        entry.Type,
@@ -3772,7 +4034,7 @@ func (b *SystemBackend) pathInternalUIMountsRead(ctx context.Context, req *logic
 		if ns.ID == entry.NamespaceID && hasAccess(ctx, entry) {
 			if isAuthed {
 				// If this is an authed request return all the mount info
-				authMounts[entry.Path] = mountInfo(entry)
+				authMounts[entry.Path] = b.mountInfo(ctx, entry)
 			} else {
 				authMounts[entry.Path] = map[string]interface{}{
 					"type":        entry.Type,
@@ -3830,14 +4092,22 @@ func (b *SystemBackend) pathInternalUIMountRead(ctx context.Context, req *logica
 		return errResp, logical.ErrPermissionDenied
 	}
 	resp := &logical.Response{
-		Data: mountInfo(me),
+		Data: b.mountInfo(ctx, me),
 	}
 	resp.Data["path"] = me.Path
 
-	fullMountPath := ns.Path + me.Path
+	pathWithTable := ""
+
+	if me.Table == "auth" {
+		pathWithTable = me.Table + "/" + me.Path
+	} else {
+		pathWithTable = me.Path
+	}
+
+	fullMountPath := ns.Path + pathWithTable
 	if ns.ID != me.Namespace().ID {
-		resp.Data["path"] = me.Namespace().Path + me.Path
-		fullMountPath = ns.Path + me.Namespace().Path + me.Path
+		resp.Data["path"] = me.Namespace().Path + pathWithTable
+		fullMountPath = ns.Path + me.Namespace().Path + pathWithTable
 	}
 
 	if !hasMountAccess(ctx, acl, fullMountPath) {
@@ -4008,6 +4278,8 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 	// be received from plugin backends.
 	doc := framework.NewOASDocument()
 
+	genericMountPaths, _ := d.Get("generic_mount_paths").(bool)
+
 	procMountGroup := func(group, mountPrefix string) error {
 		for mount, entry := range resp.Data[group].(map[string]interface{}) {
 
@@ -4025,7 +4297,7 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 			req := &logical.Request{
 				Operation: logical.HelpOperation,
 				Storage:   req.Storage,
-				Data:      map[string]interface{}{"requestResponsePrefix": pluginType},
+				Data:      map[string]interface{}{"requestResponsePrefix": pluginType, "genericMountPaths": genericMountPaths},
 			}
 
 			resp, err := backend.HandleRequest(ctx, req)
@@ -4079,7 +4351,12 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 					}
 				}
 
-				doc.Paths["/"+mountPrefix+mount+path] = obj
+				if genericMountPaths && mount != "sys/" && mount != "identity/" {
+					s := fmt.Sprintf("/%s{mountPath}/%s", mountPrefix, path)
+					doc.Paths[s] = obj
+				} else {
+					doc.Paths["/"+mountPrefix+mount+path] = obj
+				}
 			}
 
 			// Merge backend schema components
@@ -4116,20 +4393,22 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 }
 
 type SealStatusResponse struct {
-	Type         string `json:"type"`
-	Initialized  bool   `json:"initialized"`
-	Sealed       bool   `json:"sealed"`
-	T            int    `json:"t"`
-	N            int    `json:"n"`
-	Progress     int    `json:"progress"`
-	Nonce        string `json:"nonce"`
-	Version      string `json:"version"`
-	BuildDate    string `json:"build_date"`
-	Migration    bool   `json:"migration"`
-	ClusterName  string `json:"cluster_name,omitempty"`
-	ClusterID    string `json:"cluster_id,omitempty"`
-	RecoverySeal bool   `json:"recovery_seal"`
-	StorageType  string `json:"storage_type,omitempty"`
+	Type              string `json:"type"`
+	Initialized       bool   `json:"initialized"`
+	Sealed            bool   `json:"sealed"`
+	T                 int    `json:"t"`
+	N                 int    `json:"n"`
+	Progress          int    `json:"progress"`
+	Nonce             string `json:"nonce"`
+	Version           string `json:"version"`
+	BuildDate         string `json:"build_date"`
+	Migration         bool   `json:"migration"`
+	ClusterName       string `json:"cluster_name,omitempty"`
+	ClusterID         string `json:"cluster_id,omitempty"`
+	RecoverySeal      bool   `json:"recovery_seal"`
+	StorageType       string `json:"storage_type,omitempty"`
+	HCPLinkStatus     string `json:"hcp_link_status,omitempty"`
+	HCPLinkResourceID string `json:"hcp_link_resource_ID,omitempty"`
 }
 
 func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error) {
@@ -4150,16 +4429,25 @@ func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error
 		return nil, err
 	}
 
+	hcpLinkStatus, resourceIDonHCP := core.GetHCPLinkStatus()
+
 	if sealConfig == nil {
-		return &SealStatusResponse{
-			Type:         core.SealAccess().BarrierType(),
+		s := &SealStatusResponse{
+			Type:         core.SealAccess().BarrierType().String(),
 			Initialized:  initialized,
 			Sealed:       true,
 			RecoverySeal: core.SealAccess().RecoveryKeySupported(),
 			StorageType:  core.StorageType(),
 			Version:      version.GetVersion().VersionNumber(),
 			BuildDate:    version.BuildDate,
-		}, nil
+		}
+
+		if resourceIDonHCP != "" {
+			s.HCPLinkStatus = hcpLinkStatus
+			s.HCPLinkResourceID = resourceIDonHCP
+		}
+
+		return s, nil
 	}
 
 	// Fetch the local cluster name and identifier
@@ -4178,7 +4466,7 @@ func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error
 
 	progress, nonce := core.SecretProgress()
 
-	return &SealStatusResponse{
+	s := &SealStatusResponse{
 		Type:         sealConfig.Type,
 		Initialized:  initialized,
 		Sealed:       sealed,
@@ -4193,7 +4481,14 @@ func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error
 		ClusterID:    clusterID,
 		RecoverySeal: core.SealAccess().RecoveryKeySupported(),
 		StorageType:  core.StorageType(),
-	}, nil
+	}
+
+	if resourceIDonHCP != "" {
+		s.HCPLinkStatus = hcpLinkStatus
+		s.HCPLinkResourceID = resourceIDonHCP
+	}
+
+	return s, nil
 }
 
 type LeaderResponse struct {
@@ -4326,42 +4621,10 @@ func (b *SystemBackend) rotateBarrierKey(ctx context.Context) error {
 
 func (b *SystemBackend) handleHAStatus(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	// We're always the leader if we're handling this request.
-	hostname, err := os.Hostname()
+	nodes, err := b.Core.getHAMembers()
 	if err != nil {
 		return nil, err
 	}
-
-	leader := HAStatusNode{
-		Hostname:       hostname,
-		APIAddress:     b.Core.redirectAddr,
-		ClusterAddress: b.Core.ClusterAddr(),
-		ActiveNode:     true,
-		Version:        version.GetVersion().Version,
-	}
-
-	if rb := b.Core.getRaftBackend(); rb != nil {
-		leader.UpgradeVersion = rb.EffectiveVersion()
-		leader.RedundancyZone = rb.RedundancyZone()
-	}
-
-	nodes := []HAStatusNode{leader}
-
-	for _, peerNode := range b.Core.GetHAPeerNodesCached() {
-		lastEcho := peerNode.LastEcho
-		nodes = append(nodes, HAStatusNode{
-			Hostname:       peerNode.Hostname,
-			APIAddress:     peerNode.APIAddress,
-			ClusterAddress: peerNode.ClusterAddress,
-			LastEcho:       &lastEcho,
-			Version:        peerNode.Version,
-			UpgradeVersion: peerNode.UpgradeVersion,
-			RedundancyZone: peerNode.RedundancyZone,
-		})
-	}
-
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].APIAddress < nodes[j].APIAddress
-	})
 
 	return &logical.Response{
 		Data: map[string]interface{}{
@@ -5192,6 +5455,10 @@ plugin directory.`,
 Each entry is of the form "key=value".`,
 		"",
 	},
+	"plugin-catalog_version": {
+		"The semantic version of the plugin to use.",
+		"",
+	},
 	"leases": {
 		`View or list lease metadata.`,
 		`
@@ -5233,7 +5500,7 @@ This path responds to the following HTTP methods.
 		"This function can be used to generate high-entropy random bytes.",
 	},
 	"listing_visibility": {
-		"Determines the visibility of the mount in the UI-specific listing endpoint. Accepted value are 'unauth' and ''.",
+		"Determines the visibility of the mount in the UI-specific listing endpoint. Accepted value are 'unauth' and 'hidden', with the empty default ('') behaving like 'hidden'.",
 		"",
 	},
 	"passthrough_request_headers": {

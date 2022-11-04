@@ -69,6 +69,12 @@ func (c *Core) metricsLoop(stopCh chan struct{}) {
 				c.metricSink.SetGaugeWithLabels([]string{"core", "unsealed"}, 1, nil)
 			}
 
+			if c.UndoLogsEnabled() {
+				c.metricSink.SetGaugeWithLabels([]string{"core", "replication", "write_undo_logs"}, 1, nil)
+			} else {
+				c.metricSink.SetGaugeWithLabels([]string{"core", "replication", "write_undo_logs"}, 0, nil)
+			}
+
 			// Refresh the standby gauge, on all nodes
 			if haState != consts.Active {
 				c.metricSink.SetGaugeWithLabels([]string{"core", "active"}, 0, nil)
@@ -122,7 +128,7 @@ func (c *Core) metricsLoop(stopCh chan struct{}) {
 			}
 			// Ship barrier encryption counts if a perf standby or the active node
 			// on a performance secondary cluster
-			if c.perfStandby || c.ReplicationState().HasState(consts.ReplicationPerformanceSecondary) { // already have lock here, do not re-acquire
+			if c.perfStandby || c.IsPerfSecondary() { // already have lock here, do not re-acquire
 				err := syncBarrierEncryptionCounter(c)
 				if err != nil {
 					c.logger.Error("writing syncing encryption counters", "err", err)

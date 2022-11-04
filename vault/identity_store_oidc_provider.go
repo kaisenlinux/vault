@@ -159,6 +159,7 @@ type providerDiscovery struct {
 	IDTokenAlgs           []string `json:"id_token_signing_alg_values_supported"`
 	ResponseTypes         []string `json:"response_types_supported"`
 	Scopes                []string `json:"scopes_supported"`
+	Claims                []string `json:"claims_supported"`
 	Subjects              []string `json:"subject_types_supported"`
 	GrantTypes            []string `json:"grant_types_supported"`
 	AuthMethods           []string `json:"token_endpoint_auth_methods_supported"`
@@ -370,6 +371,15 @@ func oidcProviderPaths(i *IdentityStore) []*framework.Path {
 		},
 		{
 			Pattern: "oidc/provider/?$",
+			Fields: map[string]*framework.FieldSchema{
+				"allowed_client_id": {
+					Type: framework.TypeString,
+					Description: "Filters the list of OIDC providers to those " +
+						"that allow the given client ID in their set of allowed_client_ids.",
+					Default: "",
+					Query:   true,
+				},
+			},
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: i.pathOIDCListProvider,
@@ -1114,11 +1124,28 @@ func (i *IdentityStore) pathOIDCCreateUpdateClient(ctx context.Context, req *log
 
 // pathOIDCListClient is used to list clients
 func (i *IdentityStore) pathOIDCListClient(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	clients, err := req.Storage.List(ctx, clientPath)
+	clients, err := i.listClients(ctx, req.Storage)
 	if err != nil {
 		return nil, err
 	}
-	return logical.ListResponse(clients), nil
+
+	keys := make([]string, 0, len(clients))
+	keyInfo := make(map[string]interface{})
+	for _, client := range clients {
+		keys = append(keys, client.Name)
+		keyInfo[client.Name] = map[string]interface{}{
+			"redirect_uris":    client.RedirectURIs,
+			"assignments":      client.Assignments,
+			"key":              client.Key,
+			"id_token_ttl":     int64(client.IDTokenTTL.Seconds()),
+			"access_token_ttl": int64(client.AccessTokenTTL.Seconds()),
+			"client_type":      client.Type.String(),
+			"client_id":        client.ClientID,
+			// client_secret is intentionally omitted
+		}
+	}
+
+	return logical.ListResponseWithInfo(keys, keyInfo), nil
 }
 
 // pathOIDCReadClient is used to read an existing client
@@ -1318,7 +1345,43 @@ func (i *IdentityStore) pathOIDCListProvider(ctx context.Context, req *logical.R
 	if err != nil {
 		return nil, err
 	}
-	return logical.ListResponse(providers), nil
+
+	// Build a map from provider name to provider struct
+	providerMap := make(map[string]*provider)
+	for _, name := range providers {
+		provider, err := i.getOIDCProvider(ctx, req.Storage, name)
+		if err != nil {
+			return nil, err
+		}
+		if provider == nil {
+			continue
+		}
+		providerMap[name] = provider
+	}
+
+	// If allowed_client_id is provided as a query parameter, filter the set of
+	// returned OIDC providers to those that allow the given value in their set
+	// of allowed_client_ids.
+	if clientID := d.Get("allowed_client_id").(string); clientID != "" {
+		for name, provider := range providerMap {
+			if !provider.allowedClientID(clientID) {
+				delete(providerMap, name)
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(providerMap))
+	keyInfo := make(map[string]interface{})
+	for name, provider := range providerMap {
+		keys = append(keys, name)
+		keyInfo[name] = map[string]interface{}{
+			"issuer":             provider.effectiveIssuer,
+			"allowed_client_ids": provider.AllowedClientIDs,
+			"scopes_supported":   provider.ScopesSupported,
+		}
+	}
+
+	return logical.ListResponseWithInfo(keys, keyInfo), nil
 }
 
 // pathOIDCReadProvider is used to read an existing provider
@@ -1416,6 +1479,7 @@ func (i *IdentityStore) pathOIDCProviderDiscovery(ctx context.Context, req *logi
 		UserinfoEndpoint:      p.effectiveIssuer + "/userinfo",
 		IDTokenAlgs:           supportedAlgs,
 		Scopes:                scopes,
+		Claims:                []string{},
 		RequestParameter:      false,
 		RequestURIParameter:   false,
 		ResponseTypes:         []string{"code"},

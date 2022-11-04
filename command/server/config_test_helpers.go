@@ -534,6 +534,37 @@ func testUnknownFieldValidation(t *testing.T) {
 	}
 }
 
+// testUnknownFieldValidationJson tests that this valid json config does not result in
+// errors. Prior to VAULT-8519, it reported errors even with a valid config that was
+// parsed properly.
+func testUnknownFieldValidationJson(t *testing.T) {
+	config, err := LoadConfigFile("./test-fixtures/config_small.json")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	errors := config.Validate("./test-fixtures/config_small.json")
+	if errors != nil {
+		t.Fatal(errors)
+	}
+}
+
+// testUnknownFieldValidationHcl tests that this valid hcl config does not result in
+// errors. Prior to VAULT-8519, the json version of this config reported errors even
+// with a valid config that was parsed properly.
+// In short, this ensures the same for HCL as we test in testUnknownFieldValidationJson
+func testUnknownFieldValidationHcl(t *testing.T) {
+	config, err := LoadConfigFile("./test-fixtures/config_small.hcl")
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	errors := config.Validate("./test-fixtures/config_small.hcl")
+	if errors != nil {
+		t.Fatal(errors)
+	}
+}
+
 func testLoadConfigFile_json(t *testing.T) {
 	config, err := LoadConfigFile("./test-fixtures/config.hcl.json")
 	if err != nil {
@@ -900,6 +931,49 @@ EOF
 	}
 }
 
+func testParseStorageTemplate(t *testing.T) {
+	config, err := ParseConfig(`
+storage "consul" {
+
+	disable_registration = false
+	path = "tmp/"
+
+}
+ha_storage "consul" {
+	tls_skip_verify = true
+	scheme = "http"
+	max_parallel = 128
+}
+
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := &Config{
+		Storage: &Storage{
+			Type: "consul",
+			Config: map[string]string{
+				"disable_registration": "false",
+				"path":                 "tmp/",
+			},
+		},
+		HAStorage: &Storage{
+			Type: "consul",
+			Config: map[string]string{
+				"tls_skip_verify": "true",
+				"scheme":          "http",
+				"max_parallel":    "128",
+			},
+		},
+		SharedConfig: &configutil.SharedConfig{},
+	}
+	config.Prune()
+	if diff := deep.Equal(config, expected); diff != nil {
+		t.Fatal(diff)
+	}
+}
+
 func testParseSeals(t *testing.T) {
 	config, err := LoadConfigFile("./test-fixtures/config_seals.hcl")
 	if err != nil {
@@ -1013,6 +1087,7 @@ func testLoadConfigFileLeaseMetrics(t *testing.T) {
 			Config: map[string]string{
 				"bar": "baz",
 			},
+
 			DisableClustering: true,
 		},
 
