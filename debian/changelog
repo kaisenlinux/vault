@@ -1,3 +1,10 @@
+vault (1.12.2-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.12.2 version
+  * Improve the packaging
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Fri, 02 Dec 2022 14:55:03 +0100
+
 vault (1.12.1-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.12.1 version

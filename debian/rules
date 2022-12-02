@@ -16,7 +16,6 @@ override_dh_auto_build:
 	npm install --global yarn --prefix $(CURDIR)/_build
 	#Building vault...
 	make bootstrap
-	make version
 	make mysql-database-plugin
 	make mysql-legacy-database-plugin
 	make cassandra-database-plugin
@@ -33,11 +32,8 @@ override_dh_auto_test:
 	go test
 
 override_dh_auto_install:
-	mkdir -p $(CURDIR)/debian/vault/usr/bin
 	cp -f $(CURDIR)/bin/vault $(CURDIR)/debian/vault/usr/bin
-	mkdir -p $(CURDIR)/debian/vault/etc
 	cp -rf $(CURDIR)/debian/etc/* $(CURDIR)/debian/vault/etc/
-	mkdir -p $(CURDIR)/debian/vault/usr/share/pixmaps
 	cp -f $(CURDIR)/debian/vault.png $(CURDIR)/debian/vault/usr/share/pixmaps
 
 override_dh_installsystemd:
