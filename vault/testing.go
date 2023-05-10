@@ -33,6 +33,7 @@ import (
 	raftlib "github.com/hashicorp/raft"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/audit"
+	auditFile "github.com/hashicorp/vault/builtin/audit/file"
 	"github.com/hashicorp/vault/builtin/credential/approle"
 	"github.com/hashicorp/vault/command/server"
 	"github.com/hashicorp/vault/helper/metricsutil"
@@ -127,6 +128,9 @@ func TestCoreWithSeal(t testing.T, testSeal Seal, enableRaw bool) *Core {
 		EnableUI:        false,
 		EnableRaw:       enableRaw,
 		BuiltinRegistry: NewMockBuiltinRegistry(),
+		AuditBackends: map[string]audit.Factory{
+			"file": auditFile.Factory,
+		},
 	}
 	return TestCoreWithSealAndUI(t, conf)
 }
@@ -536,6 +540,9 @@ func TestAddTestPlugin(t testing.T, c *Core, name string, pluginType consts.Plug
 
 		// Copy over the file to the temp dir
 		dst := filepath.Join(tempDir, fileName)
+
+		// delete the file first to avoid notary failures in macOS
+		_ = os.Remove(dst) // ignore error
 		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode())
 		if err != nil {
 			t.Fatal(err)
@@ -549,6 +556,9 @@ func TestAddTestPlugin(t testing.T, c *Core, name string, pluginType consts.Plug
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Ensure that the file is closed and written. This seems to be
+		// necessary on Linux systems.
+		out.Close()
 
 		dirPath = tempDir
 	}
@@ -1635,18 +1645,15 @@ func NewTestCluster(t testing.T, base *CoreConfig, opts *TestClusterOptions) *Te
 		}
 
 		coreConfig.ClusterCipherSuites = base.ClusterCipherSuites
-
 		coreConfig.DisableCache = base.DisableCache
-
 		coreConfig.DevToken = base.DevToken
 		coreConfig.RecoveryMode = base.RecoveryMode
-
 		coreConfig.ActivityLogConfig = base.ActivityLogConfig
 		coreConfig.EnableResponseHeaderHostname = base.EnableResponseHeaderHostname
 		coreConfig.EnableResponseHeaderRaftNodeID = base.EnableResponseHeaderRaftNodeID
-
 		coreConfig.RollbackPeriod = base.RollbackPeriod
-
+		coreConfig.PendingRemovalMountsAllowed = base.PendingRemovalMountsAllowed
+		coreConfig.ExpirationRevokeRetryBase = base.ExpirationRevokeRetryBase
 		testApplyEntBaseConfig(coreConfig, base)
 	}
 	if coreConfig.ClusterName == "" {
@@ -2242,31 +2249,41 @@ func toFunc(f logical.Factory) func() (interface{}, error) {
 
 func NewMockBuiltinRegistry() *mockBuiltinRegistry {
 	return &mockBuiltinRegistry{
-		forTesting: map[string]consts.PluginType{
-			"mysql-database-plugin":      consts.PluginTypeDatabase,
-			"postgresql-database-plugin": consts.PluginTypeDatabase,
-			"approle":                    consts.PluginTypeCredential,
-			"aws":                        consts.PluginTypeCredential,
-			"consul":                     consts.PluginTypeSecrets,
+		forTesting: map[string]mockBackend{
+			"mysql-database-plugin":      {PluginType: consts.PluginTypeDatabase},
+			"postgresql-database-plugin": {PluginType: consts.PluginTypeDatabase},
+			"approle":                    {PluginType: consts.PluginTypeCredential},
+			"pending-removal-test-plugin": {
+				PluginType:        consts.PluginTypeCredential,
+				DeprecationStatus: consts.PendingRemoval,
+			},
+			"aws":    {PluginType: consts.PluginTypeCredential},
+			"consul": {PluginType: consts.PluginTypeSecrets},
 		},
 	}
 }
 
+type mockBackend struct {
+	consts.PluginType
+	consts.DeprecationStatus
+}
+
 type mockBuiltinRegistry struct {
-	forTesting map[string]consts.PluginType
+	forTesting map[string]mockBackend
 }
 
 func (m *mockBuiltinRegistry) Get(name string, pluginType consts.PluginType) (func() (interface{}, error), bool) {
-	testPluginType, ok := m.forTesting[name]
+	testBackend, ok := m.forTesting[name]
 	if !ok {
 		return nil, false
 	}
+	testPluginType := testBackend.PluginType
 	if pluginType != testPluginType {
 		return nil, false
 	}
 
 	switch name {
-	case "approle":
+	case "approle", "pending-removal-test-plugin":
 		return toFunc(approle.Factory), true
 	case "aws":
 		return toFunc(func(ctx context.Context, config *logical.BackendConfig) (logical.Backend, error) {
@@ -2326,6 +2343,7 @@ func (m *mockBuiltinRegistry) Keys(pluginType consts.PluginType) []string {
 		}
 	case consts.PluginTypeCredential:
 		return []string{
+			"pending-removal-test-plugin",
 			"approle",
 		}
 	}
@@ -2343,7 +2361,7 @@ func (m *mockBuiltinRegistry) Contains(name string, pluginType consts.PluginType
 
 func (m *mockBuiltinRegistry) DeprecationStatus(name string, pluginType consts.PluginType) (consts.DeprecationStatus, bool) {
 	if m.Contains(name, pluginType) {
-		return consts.Supported, true
+		return m.forTesting[name].DeprecationStatus, true
 	}
 
 	return consts.Unknown, false
