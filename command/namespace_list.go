@@ -37,18 +37,7 @@ Usage: vault namespace list [options]
 }
 
 func (c *NamespaceListCommand) Flags() *FlagSets {
-	set := c.flagSet(FlagSetHTTP | FlagSetOutputFormat)
-
-	f := set.NewFlagSet("Command Options")
-
-	f.BoolVar(&BoolVar{
-		Name:    "detailed",
-		Target:  &c.flagDetailed,
-		Default: false,
-		Usage:   "Print detailed information such as namespace ID.",
-	})
-
-	return set
+	return c.flagSet(FlagSetHTTP | FlagSetOutputFormat)
 }
 
 func (c *NamespaceListCommand) AutocompleteArgs() complete.Predictor {
@@ -110,10 +99,6 @@ func (c *NamespaceListCommand) Run(args []string) int {
 	if !ok {
 		c.UI.Error("No entries found")
 		return 2
-	}
-
-	if c.flagDetailed && Format(c.UI) != "table" {
-		return OutputData(c.UI, secret.Data["key_info"])
 	}
 
 	return OutputList(c.UI, secret)

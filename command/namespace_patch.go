@@ -37,11 +37,11 @@ Usage: vault namespace patch [options] PATH
 
   Patch an existing child namespace by adding and removing custom-metadata (e.g. ns1/):
 
-      $ vault namespace patch -custom-metadata=foo=abc -remove-custom-metadata=bar ns1
+      $ vault namespace patch ns1 -custom-metadata=foo=abc -remove-custom-metadata=bar
 
   Patch an existing child namespace from a parent namespace (e.g. ns1/ns2/):
 
-      $ vault namespace patch -namespace=ns1 -custom-metadata=foo=abc ns2
+      $ vault namespace patch -namespace=ns1 ns2 -custom-metadata=foo=abc
 
 ` + c.Flags().Help()
 

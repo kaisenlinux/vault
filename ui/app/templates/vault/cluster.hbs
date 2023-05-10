@@ -132,13 +132,15 @@
   <LogoSplash />
 {{else}}
   {{#if this.showNav}}
-    <section class="section">
-      <div class="container is-widescreen">
-        <TokenExpireWarning @expirationDate={{this.auth.tokenExpirationDate}}>
-          {{outlet}}
-        </TokenExpireWarning>
-      </div>
-    </section>
+    <UiWizard>
+      <section class="section">
+        <div class="container is-widescreen">
+          <TokenExpireWarning @expirationDate={{this.auth.tokenExpirationDate}}>
+            {{outlet}}
+          </TokenExpireWarning>
+        </div>
+      </section>
+    </UiWizard>
   {{else}}
     {{outlet}}
   {{/if}}

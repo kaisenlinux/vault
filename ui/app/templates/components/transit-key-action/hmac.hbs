@@ -1,9 +1,4 @@
-<form
-  onsubmit={{action
-    @doSubmit
-    (hash input=@input algorithm=@algorithm key_version=@key_version encodedBase64=@encodedBase64)
-  }}
->
+<form onsubmit={{action @doSubmit (hash input=@input algorithm=@algorithm key_version=@key_version)}}>
   <div class="box is-sideless is-fullwidth is-marginless">
     <NamespaceReminder @mode="perform" @noun="HMAC creation" />
     <div class="content">

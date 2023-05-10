@@ -3,7 +3,6 @@ package vault
 import (
 	"context"
 	"fmt"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -106,7 +105,7 @@ func (a *AuditBroker) LogRequest(ctx context.Context, in *logical.LogInput, head
 
 	defer func() {
 		if r := recover(); r != nil {
-			a.logger.Error("panic during logging", "request_path", in.Request.Path, "error", r, "stacktrace", string(debug.Stack()))
+			a.logger.Error("panic during logging", "request_path", in.Request.Path, "error", r)
 			retErr = multierror.Append(retErr, fmt.Errorf("panic generating audit log"))
 		}
 
@@ -177,7 +176,7 @@ func (a *AuditBroker) LogResponse(ctx context.Context, in *logical.LogInput, hea
 
 	defer func() {
 		if r := recover(); r != nil {
-			a.logger.Error("panic during logging", "request_path", in.Request.Path, "error", r, "stacktrace", string(debug.Stack()))
+			a.logger.Error("panic during logging", "request_path", in.Request.Path, "error", r)
 			retErr = multierror.Append(retErr, fmt.Errorf("panic generating audit log"))
 		}
 

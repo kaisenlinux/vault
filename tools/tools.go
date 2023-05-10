@@ -16,7 +16,6 @@ package tools
 //go:generate go install google.golang.org/protobuf/cmd/protoc-gen-go
 //go:generate go install google.golang.org/grpc/cmd/protoc-gen-go-grpc
 //go:generate go install github.com/favadi/protoc-go-inject-tag
-//go:generate go install gotest.tools/gotestsum
 import (
 	_ "golang.org/x/tools/cmd/goimports"
 
@@ -29,6 +28,4 @@ import (
 	_ "google.golang.org/grpc/cmd/protoc-gen-go-grpc"
 
 	_ "github.com/favadi/protoc-go-inject-tag"
-
-	_ "gotest.tools/gotestsum"
 )

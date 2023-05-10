@@ -21,6 +21,7 @@ const DEFAULTS = {
 export default Component.extend(ReplicationActions, DEFAULTS, {
   replicationMode: 'dr',
   mode: 'primary',
+  wizard: service(),
   version: service(),
   didReceiveAttrs() {
     this._super(...arguments);

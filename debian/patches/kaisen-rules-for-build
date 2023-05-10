@@ -1,17 +1,17 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.12.6.orig/scripts/build.sh
-+++ vault-1.12.6/scripts/build.sh
+--- vault-1.12.2.orig/scripts/build.sh
++++ vault-1.12.2/scripts/build.sh
 @@ -18,8 +18,8 @@ cd "$DIR"
  BUILD_TAGS="${BUILD_TAGS:-"vault"}"
  
  # Get the git commit
--GIT_COMMIT="$("$SOURCE_DIR"/ci-helper.sh revision)"
+-GIT_COMMIT="$("$SOURCE_DIR"/crt-builder.sh revision)"
 -GIT_DIRTY="$(test -n "`git status --porcelain`" && echo "+CHANGES" || true)"
-+#GIT_COMMIT="$("$SOURCE_DIR"/ci-helper.sh revision)"
++#GIT_COMMIT="$("$SOURCE_DIR"/crt-builder.sh revision)"
 +#GIT_DIRTY="$(test -n "`git status --porcelain`" && echo "+CHANGES" || true)"
  
- BUILD_DATE="$("$SOURCE_DIR"/ci-helper.sh date)"
+ BUILD_DATE="$("$SOURCE_DIR"/crt-builder.sh date)"
  
 @@ -40,7 +40,7 @@ mkdir -p bin/
  echo "==> Building..."
@@ -22,9 +22,9 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
      -o "bin/vault" \
      -tags "${BUILD_TAGS}" \
      .
---- vault-1.12.6.orig/scripts/ci-helper.sh
-+++ vault-1.12.6/scripts/ci-helper.sh
-@@ -93,7 +93,7 @@ function version_package() {
+--- vault-1.12.2.orig/scripts/crt-builder.sh
++++ vault-1.12.2/scripts/crt-builder.sh
+@@ -74,7 +74,7 @@ function version_metadata() {
  function build_date() {
    # It's tricky to do an RFC3339 format in a cross platform way, so we hardcode UTC
    : "${DATE_FORMAT:="%Y-%m-%dT%H:%M:%SZ"}"

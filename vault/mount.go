@@ -72,13 +72,6 @@ const (
 	MountTableNoUpdateStorage = false
 )
 
-// DeprecationStatus errors
-var (
-	errMountDeprecated     = errors.New("mount entry associated with deprecated builtin")
-	errMountPendingRemoval = errors.New("mount entry associated with pending removal builtin")
-	errMountRemoved        = errors.New("mount entry associated with removed builtin")
-)
-
 var (
 	// loadMountsFailed if loadMounts encounters an error
 	errLoadMountsFailed = errors.New("failed to setup mount table")
@@ -111,6 +104,8 @@ var (
 	// mountAliases maps old backend names to new backend names, allowing us
 	// to move/rename backends but maintain backwards compatibility
 	mountAliases = map[string]string{"generic": "kv"}
+
+	PendingRemovalMountsAllowed = false
 )
 
 func (c *Core) generateMountAccessor(entryType string) (string, error) {
@@ -470,6 +465,12 @@ func (c *Core) decodeMountTable(ctx context.Context, raw []byte) (*MountTable, e
 		if ns == nil {
 			c.logger.Error("namespace on mount entry not found", "namespace_id", entry.NamespaceID, "mount_path", entry.Path, "mount_description", entry.Description)
 			continue
+		}
+
+		// Immediately shutdown the core if deprecated mounts are detected and VAULT_ALLOW_PENDING_REMOVAL_MOUNTS is unset
+		if _, err := c.handleDeprecatedMountEntry(ctx, entry, consts.PluginTypeUnknown); err != nil {
+			c.logger.Error("shutting down core", "error", err)
+			c.Shutdown()
 		}
 
 		entry.namespace = ns
@@ -927,12 +928,14 @@ func (c *Core) taintMountEntry(ctx context.Context, nsID, mountPath string, upda
 }
 
 // handleDeprecatedMountEntry handles the Deprecation Status of the specified
-// mount entry's builtin engine. Warnings are appended to the returned response
-// and logged. Errors are returned with a nil response to be processed by the
-// caller.
+// mount entry's builtin engine as follows:
+//
+// * Supported - do nothing
+// * Deprecated - log a warning about builtin deprecation
+// * PendingRemoval - log an error about builtin deprecation and return an error
+// if VAULT_ALLOW_PENDING_REMOVAL_MOUNTS is unset
+// * Removed - log an error about builtin deprecation and return an error
 func (c *Core) handleDeprecatedMountEntry(ctx context.Context, entry *MountEntry, pluginType consts.PluginType) (*logical.Response, error) {
-	resp := &logical.Response{}
-
 	if c.builtinRegistry == nil || entry == nil {
 		return nil, nil
 	}
@@ -950,22 +953,28 @@ func (c *Core) handleDeprecatedMountEntry(ctx context.Context, entry *MountEntry
 
 	status, ok := c.builtinRegistry.DeprecationStatus(t, pluginType)
 	if ok {
+		resp := &logical.Response{}
+		// Deprecation sublogger with some identifying information
+		dl := c.logger.With("name", t, "type", pluginType, "status", status, "path", entry.Path)
+		errDeprecatedMount := fmt.Errorf("mount entry associated with %s builtin", status)
+
 		switch status {
 		case consts.Deprecated:
-			c.logger.Warn("mounting deprecated builtin", "name", t, "type", pluginType, "path", entry.Path)
-			resp.AddWarning(errMountDeprecated.Error())
+			dl.Warn(errDeprecatedMount.Error())
+			resp.AddWarning(errDeprecatedMount.Error())
 			return resp, nil
 
 		case consts.PendingRemoval:
-			if c.pendingRemovalMountsAllowed {
-				c.Logger().Info("mount allowed by environment variable", "env", consts.EnvVaultAllowPendingRemovalMounts)
-				resp.AddWarning(errMountPendingRemoval.Error())
-				return resp, nil
+			dl.Error(errDeprecatedMount.Error())
+			if !PendingRemovalMountsAllowed {
+				return nil, fmt.Errorf("could not mount %q: %w", t, errDeprecatedMount)
 			}
-			return nil, errMountPendingRemoval
+			resp.AddWarning(errDeprecatedMount.Error())
+			c.Logger().Info("mount allowed by environment variable", "env", consts.VaultAllowPendingRemovalMountsEnv)
+			return resp, nil
 
 		case consts.Removed:
-			return nil, errMountRemoved
+			return nil, fmt.Errorf("could not mount %s: %w", t, errDeprecatedMount)
 		}
 	}
 	return nil, nil
@@ -1425,8 +1434,10 @@ func (c *Core) setupMounts(ctx context.Context) error {
 		backend, entry.RunningSha256, err = c.newLogicalBackend(ctx, entry, sysView, view)
 		if err != nil {
 			c.logger.Error("failed to create mount entry", "path", entry.Path, "error", err)
-
-			if c.isMountable(ctx, entry, consts.PluginTypeSecrets) {
+			if !c.builtinRegistry.Contains(entry.Type, consts.PluginTypeSecrets) {
+				// If we encounter an error instantiating the backend due to an error,
+				// skip backend initialization but register the entry to the mount table
+				// to preserve storage and path.
 				c.logger.Warn("skipping plugin-based mount entry", "path", entry.Path)
 				goto ROUTER_MOUNT
 			}
@@ -1442,22 +1453,6 @@ func (c *Core) setupMounts(ctx context.Context) error {
 			// don't set the running version to a builtin if it is running as an external plugin
 			if externaler, ok := backend.(logical.Externaler); !ok || !externaler.IsExternal() {
 				entry.RunningVersion = versions.GetBuiltinVersion(consts.PluginTypeSecrets, entry.Type)
-			}
-		}
-
-		// Do not start up deprecated builtin plugins. If this is a major
-		// upgrade, stop unsealing and shutdown. If we've already mounted this
-		// plugin, proceed with unsealing and skip backend initialization.
-		if versions.IsBuiltinVersion(entry.RunningVersion) {
-			_, err := c.handleDeprecatedMountEntry(ctx, entry, consts.PluginTypeSecrets)
-			if c.isMajorVersionFirstMount(ctx) && err != nil {
-				go c.ShutdownCoreError(fmt.Errorf("could not mount %q: %w", entry.Type, err))
-				return errLoadMountsFailed
-			} else if err != nil {
-				c.logger.Error("skipping deprecated mount entry", "name", entry.Type, "path", entry.Path, "error", err)
-				backend.Cleanup(ctx)
-				backend = nil
-				goto ROUTER_MOUNT
 			}
 		}
 
@@ -1497,21 +1492,20 @@ func (c *Core) setupMounts(ctx context.Context) error {
 			// Bind locally
 			localEntry := entry
 			c.postUnsealFuncs = append(c.postUnsealFuncs, func() {
-				postUnsealLogger := c.logger.With("type", localEntry.Type, "version", localEntry.RunningVersion, "path", localEntry.Path)
 				if backend == nil {
-					postUnsealLogger.Error("skipping initialization for nil backend", "path", localEntry.Path)
+					c.logger.Error("skipping initialization on nil backend", "path", localEntry.Path)
 					return
 				}
 
 				err := backend.Initialize(ctx, &logical.InitializationRequest{Storage: view})
 				if err != nil {
-					postUnsealLogger.Error("failed to initialize mount backend", "error", err)
+					c.logger.Error("failed to initialize mount entry", "path", localEntry.Path, "error", err)
 				}
 			})
 		}
 
 		if c.logger.IsInfo() {
-			c.logger.Info("successfully mounted", "type", entry.Type, "version", entry.RunningVersion, "path", entry.Path, "namespace", entry.Namespace())
+			c.logger.Info("successfully mounted backend", "type", entry.Type, "version", entry.Version, "path", entry.Path)
 		}
 
 		// Ensure the path is tainted if set in the mount table

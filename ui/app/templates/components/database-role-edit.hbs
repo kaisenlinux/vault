@@ -36,17 +36,12 @@
           Rotate credentials
         </button>
       {{/if}}
-      {{#if
-        (or
-          (and (eq @model.type "static") @model.canGetCredentials)
-          (and (eq @model.type "dynamic") @model.canGenerateCredentials)
-        )
-      }}
+      {{#if @model.canGenerateCredentials}}
         <button
           type="button"
           class="toolbar-link"
           {{on "click" (fn this.generateCreds @model.id @model.type)}}
-          data-test-database-role-creds={{@model.type}}
+          data-test-database-role-generate-creds
         >
           {{if (eq @model.type "static") "Get credentials" "Generate credentials"}}
         </button>

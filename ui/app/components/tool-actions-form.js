@@ -26,6 +26,7 @@ const WRAPPING_ENDPOINTS = ['lookup', 'wrap', 'unwrap', 'rewrap'];
 
 export default Component.extend(DEFAULTS, {
   store: service(),
+  wizard: service(),
   // putting these attrs here so they don't get reset when you click back
   //random
   bytes: 32,
@@ -91,6 +92,9 @@ export default Component.extend(DEFAULTS, {
     if (resp && resp.wrap_info) {
       const keyName = action === 'rewrap' ? 'rewrap_token' : 'token';
       props = assign({}, props, { [keyName]: resp.wrap_info.token });
+    }
+    if (props.token || props.rewrap_token || props.unwrap_data || action === 'lookup') {
+      this.wizard.transitionFeatureMachine(this.wizard.featureState, 'CONTINUE');
     }
     setProperties(this, props);
   },

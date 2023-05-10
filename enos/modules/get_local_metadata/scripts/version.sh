@@ -2,5 +2,5 @@
 set -eu -o pipefail
 
 pushd "$(git rev-parse --show-toplevel)" > /dev/null
-make ci-get-version
+make crt-get-version
 popd > /dev/null

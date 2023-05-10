@@ -31,12 +31,14 @@ variable "vault_root_token" {
 
 variable "vault_autopilot_upgrade_version" {
   type        = string
-  description = "The Vault upgraded version"
+  description = "The directory where the Vault binary will be installed"
+  default     = null
 }
 
 variable "vault_autopilot_upgrade_status" {
   type        = string
-  description = "The autopilot upgrade expected status"
+  description = "The directory where the Vault binary will be installed"
+  default     = null
 }
 
 locals {

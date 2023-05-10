@@ -9,7 +9,16 @@ const Eng = Engine.extend({
   modulePrefix,
   Resolver,
   dependencies: {
-    services: ['auth', 'flash-messages', 'namespace', 'replication-mode', 'router', 'store', 'version'],
+    services: [
+      'auth',
+      'flash-messages',
+      'namespace',
+      'replication-mode',
+      'router',
+      'store',
+      'version',
+      'wizard',
+    ],
     externalRoutes: ['replication'],
   },
 });

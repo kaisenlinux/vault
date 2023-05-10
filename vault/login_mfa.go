@@ -2541,10 +2541,6 @@ func (b *LoginMFABackend) deleteMFALoginEnforcementConfigByNameAndNamespace(ctx 
 		return err
 	}
 
-	if eConfig == nil {
-		return nil
-	}
-
 	entryIndex := mfaLoginEnforcementPrefix + eConfig.ID
 	barrierView, err := b.Core.barrierViewForNamespace(eConfig.NamespaceID)
 	if err != nil {

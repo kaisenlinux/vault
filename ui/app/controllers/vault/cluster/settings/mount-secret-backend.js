@@ -1,9 +1,11 @@
+import { inject as service } from '@ember/service';
 import Controller from '@ember/controller';
 import { supportedSecretBackends } from 'vault/helpers/supported-secret-backends';
 
 const SUPPORTED_BACKENDS = supportedSecretBackends();
 
 export default Controller.extend({
+  wizard: service(),
   actions: {
     onMountSuccess: function (type, path) {
       let transition;
@@ -20,7 +22,9 @@ export default Controller.extend({
       } else {
         transition = this.transitionToRoute('vault.cluster.secrets.backends');
       }
-      return transition.followRedirects();
+      return transition.followRedirects().then(() => {
+        this.wizard.transitionFeatureMachine(this.wizard.featureState, 'CONTINUE', type);
+      });
     },
   },
 });

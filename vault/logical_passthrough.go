@@ -16,32 +16,20 @@ import (
 // PassthroughBackendFactory returns a PassthroughBackend
 // with leases switched off
 func PassthroughBackendFactory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	return LeaseSwitchedPassthroughBackend(ctx, conf, nil)
+	return LeaseSwitchedPassthroughBackend(ctx, conf, false)
 }
 
 // LeasedPassthroughBackendFactory returns a PassthroughBackend
 // with leases switched on
 func LeasedPassthroughBackendFactory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
-	return LeaseSwitchedPassthroughBackend(ctx, conf, func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		return nil, nil
-	})
+	return LeaseSwitchedPassthroughBackend(ctx, conf, true)
 }
-
-type revokeFunc func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error)
 
 // LeaseSwitchedPassthroughBackend returns a PassthroughBackend
 // with leases switched on or off
-func LeaseSwitchedPassthroughBackend(ctx context.Context, conf *logical.BackendConfig, revoke revokeFunc) (logical.Backend, error) {
+func LeaseSwitchedPassthroughBackend(ctx context.Context, conf *logical.BackendConfig, leases bool) (logical.Backend, error) {
 	var b PassthroughBackend
-	if revoke == nil {
-		// We probably don't need this, since we should never have to handle revoke requests, but just in case...
-		b.revoke = func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-			return nil, nil
-		}
-	} else {
-		b.generateLeases = true
-		b.revoke = revoke
-	}
+	b.generateLeases = leases
 	b.Backend = &framework.Backend{
 		Help: strings.TrimSpace(passthroughHelp),
 
@@ -77,7 +65,7 @@ func LeaseSwitchedPassthroughBackend(ctx context.Context, conf *logical.BackendC
 			Type: "kv",
 
 			Renew:  b.handleRead,
-			Revoke: b.revoke,
+			Revoke: b.handleRevoke,
 		},
 	}
 
@@ -96,7 +84,6 @@ func LeaseSwitchedPassthroughBackend(ctx context.Context, conf *logical.BackendC
 type PassthroughBackend struct {
 	*framework.Backend
 	generateLeases bool
-	revoke         func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error)
 }
 
 func (b *PassthroughBackend) handleRevoke(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {

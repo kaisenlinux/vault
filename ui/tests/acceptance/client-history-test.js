@@ -193,13 +193,12 @@ module('Acceptance | clients history tab', function (hooks) {
     );
 
     // query custom end month
-    const customEndDate = subMonths(NEW_DATE, 3);
     await click(SELECTORS.rangeDropdown);
     await click('[data-test-show-calendar]');
-    if (parseInt(find('[data-test-display-year]').innerText) !== customEndDate.getFullYear()) {
-      await click('[data-test-previous-year]');
+    if (parseInt(find('[data-test-display-year]').innerText) < NEW_DATE.getFullYear()) {
+      await click('[data-test-future-year]');
     }
-    await click(find(`[data-test-calendar-month=${ARRAY_OF_MONTHS[customEndDate.getMonth()]}]`));
+    await click(find(`[data-test-calendar-month=${ARRAY_OF_MONTHS[LAST_MONTH.getMonth() - 2]}]`));
 
     assert.dom(SELECTORS.attributionBlock).exists('Shows attribution area');
     assert.dom(SELECTORS.monthlyUsageBlock).exists('Shows monthly usage block');
@@ -219,8 +218,8 @@ module('Acceptance | clients history tab', function (hooks) {
     // query for single, historical month
     await click(SELECTORS.rangeDropdown);
     await click('[data-test-show-calendar]');
-    if (parseInt(find('[data-test-display-year]').innerText) !== UPGRADE_DATE.getFullYear()) {
-      await click('[data-test-previous-year]');
+    if (parseInt(find('[data-test-display-year]').innerText) < NEW_DATE.getFullYear()) {
+      await click('[data-test-future-year]');
     }
     await click(find(`[data-test-calendar-month=${ARRAY_OF_MONTHS[UPGRADE_DATE.getMonth()]}]`));
 

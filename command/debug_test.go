@@ -534,10 +534,6 @@ func TestDebugCommand_NoConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := client.SetAddress(""); err != nil {
-		t.Fatal(err)
-	}
-
 	_, cmd := testDebugCommand(t)
 	cmd.client = client
 	cmd.skipTimingChecks = true

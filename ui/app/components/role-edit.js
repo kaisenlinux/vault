@@ -12,6 +12,7 @@ const SHOW_ROUTE = 'vault.cluster.secrets.backend.show';
 
 export default Component.extend(FocusOnInsertMixin, {
   router: service(),
+  wizard: service(),
 
   mode: null,
   emptyData: '{\n}',
@@ -19,6 +20,19 @@ export default Component.extend(FocusOnInsertMixin, {
   onRefresh() {},
   model: null,
   requestInFlight: or('model.isLoading', 'model.isReloading', 'model.isSaving'),
+
+  didReceiveAttrs() {
+    this._super(...arguments);
+    if (
+      (this.wizard.featureState === 'details' && this.mode === 'create') ||
+      (this.wizard.featureState === 'role' && this.mode === 'show')
+    ) {
+      this.wizard.transitionFeatureMachine(this.wizard.featureState, 'CONTINUE', this.backendType);
+    }
+    if (this.wizard.featureState === 'displayRole') {
+      this.wizard.transitionFeatureMachine(this.wizard.featureState, 'NOOP', this.backendType);
+    }
+  },
 
   willDestroyElement() {
     this._super(...arguments);
@@ -55,6 +69,9 @@ export default Component.extend(FocusOnInsertMixin, {
     const model = this.model;
     return model[method]().then(() => {
       if (!model.isError) {
+        if (this.wizard.featureState === 'role') {
+          this.wizard.transitionFeatureMachine('role', 'CONTINUE', this.backendType);
+        }
         successCallback(model);
       }
     });

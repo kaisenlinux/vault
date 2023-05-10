@@ -4,21 +4,15 @@ scenario "smoke" {
     backend         = ["consul", "raft"]
     artifact_source = ["local", "crt", "artifactory"]
     artifact_type   = ["bundle", "package"]
-    consul_version  = ["1.14.2", "1.13.4", "1.12.7"]
+    consul_version  = ["1.13.2", "1.12.5", "1.11.10"]
     distro          = ["ubuntu", "rhel"]
-    edition         = ["oss", "ent", "ent.fips1402", "ent.hsm", "ent.hsm.fips1402"]
+    edition         = ["oss", "ent"]
     seal            = ["awskms", "shamir"]
 
-    # Packages are not offered for the oss, ent.fips1402, and ent.hsm.fips1402 editions
+    # Packages are not offered for the oss edition
     exclude {
-      edition       = ["oss", "ent.fips1402", "ent.hsm.fips1402"]
+      edition       = ["oss"]
       artifact_type = ["package"]
-    }
-
-    # Our local builder always creates bundles
-    exclude {
-      artifact_source = ["local"]
-      artifact_type   = ["package"]
     }
   }
 
@@ -32,22 +26,14 @@ scenario "smoke" {
 
   locals {
     build_tags = {
-      "oss"              = ["ui"]
-      "ent"              = ["ui", "enterprise", "ent"]
-      "ent.fips1402"     = ["ui", "enterprise", "cgo", "hsm", "fips", "fips_140_2", "ent.fips1402"]
-      "ent.hsm"          = ["ui", "enterprise", "cgo", "hsm", "venthsm"]
-      "ent.hsm.fips1402" = ["ui", "enterprise", "cgo", "hsm", "fips", "fips_140_2", "ent.hsm.fips1402"]
+      "oss" = ["ui"]
+      "ent" = ["enterprise", "ent"]
     }
-    bundle_path = matrix.artifact_source != "artifactory" ? abspath(var.vault_bundle_path) : null
-    packages    = ["jq"]
+    bundle_path             = matrix.artifact_source != "artifactory" ? abspath(var.vault_bundle_path) : null
+    dependencies_to_install = ["jq"]
     enos_provider = {
       rhel   = provider.enos.rhel
       ubuntu = provider.enos.ubuntu
-    }
-    spot_price_max = {
-      // These prices are based on on-demand cost for t3.medium in us-east
-      "rhel"   = "0.1016"
-      "ubuntu" = "0.0416"
     }
     tags = merge({
       "Project Name" : var.project_name
@@ -129,11 +115,11 @@ scenario "smoke" {
     depends_on = [step.create_vpc]
 
     providers = {
-      enos = provider.enos.ubuntu
+      enos = local.enos_provider[matrix.distro]
     }
 
     variables {
-      ami_id      = step.create_vpc.ami_ids["ubuntu"]["amd64"]
+      ami_id      = step.create_vpc.ami_ids[matrix.distro][matrix.arch]
       common_tags = local.tags
       consul_release = {
         edition = var.backend_edition
@@ -145,30 +131,11 @@ scenario "smoke" {
     }
   }
 
-  step "create_vault_cluster_targets" {
-    module     = module.target_ec2_spot_fleet // "target_ec2_instances" can be used for on-demand instances
-    depends_on = [step.create_vpc]
-
-    providers = {
-      enos = local.enos_provider[matrix.distro]
-    }
-
-    variables {
-      ami_id                = step.create_vpc.ami_ids[matrix.distro][matrix.arch]
-      awskms_unseal_key_arn = step.create_vpc.kms_key_arn
-      common_tags           = local.tags
-      instance_type         = local.vault_instance_type // only used for on-demand instances
-      spot_price_max        = local.spot_price_max[matrix.distro]
-      vpc_id                = step.create_vpc.vpc_id
-    }
-  }
-
   step "create_vault_cluster" {
     module = module.vault_cluster
     depends_on = [
       step.create_backend_cluster,
       step.build_vault,
-      step.create_vault_cluster_targets
     ]
 
     providers = {
@@ -176,39 +143,19 @@ scenario "smoke" {
     }
 
     variables {
-      artifactory_release   = matrix.artifact_source == "artifactory" ? step.build_vault.vault_artifactory_release : null
-      awskms_unseal_key_arn = step.create_vpc.kms_key_arn
-      cluster_name          = step.create_vault_cluster_targets.cluster_name
-      config_env_vars = {
-        VAULT_LOG_LEVEL = var.vault_log_level
-      }
-      consul_cluster_tag = step.create_backend_cluster.consul_cluster_tag
-      consul_release = matrix.backend == "consul" ? {
-        edition = var.backend_edition
-        version = matrix.consul_version
-      } : null
-      install_dir         = local.vault_install_dir
-      license             = matrix.edition != "oss" ? step.read_license.license : null
-      local_artifact_path = local.bundle_path
-      packages            = local.packages
-      storage_backend     = matrix.backend
-      target_hosts        = step.create_vault_cluster_targets.hosts
-      unseal_method       = matrix.seal
-    }
-  }
-
-  step "get_vault_cluster_ips" {
-    module     = module.vault_get_cluster_ips
-    depends_on = [step.create_vault_cluster]
-
-    providers = {
-      enos = local.enos_provider[matrix.distro]
-    }
-
-    variables {
-      vault_instances   = step.create_vault_cluster_targets.hosts
-      vault_install_dir = local.vault_install_dir
-      vault_root_token  = step.create_vault_cluster.root_token
+      ami_id                    = step.create_vpc.ami_ids[matrix.distro][matrix.arch]
+      common_tags               = local.tags
+      consul_cluster_tag        = step.create_backend_cluster.consul_cluster_tag
+      dependencies_to_install   = local.dependencies_to_install
+      instance_type             = local.vault_instance_type
+      kms_key_arn               = step.create_vpc.kms_key_arn
+      storage_backend           = matrix.backend
+      unseal_method             = matrix.seal
+      vault_local_artifact_path = local.bundle_path
+      vault_install_dir         = local.vault_install_dir
+      vault_artifactory_release = matrix.artifact_source == "artifactory" ? step.build_vault.vault_artifactory_release : null
+      vault_license             = matrix.edition != "oss" ? step.read_license.license : null
+      vpc_id                    = step.create_vpc.vpc_id
     }
   }
 
@@ -221,13 +168,13 @@ scenario "smoke" {
     }
 
     variables {
-      vault_instances       = step.create_vault_cluster_targets.hosts
+      vault_instances       = step.create_vault_cluster.vault_instances
       vault_edition         = matrix.edition
       vault_install_dir     = local.vault_install_dir
       vault_product_version = matrix.artifact_source == "local" ? step.get_local_metadata.version : var.vault_product_version
       vault_revision        = matrix.artifact_source == "local" ? step.get_local_metadata.revision : var.vault_revision
       vault_build_date      = matrix.artifact_source == "local" ? step.get_local_metadata.build_date : var.vault_build_date
-      vault_root_token      = step.create_vault_cluster.root_token
+      vault_root_token      = step.create_vault_cluster.vault_root_token
     }
   }
 
@@ -241,27 +188,8 @@ scenario "smoke" {
 
     variables {
       vault_install_dir = local.vault_install_dir
-      vault_instances   = step.create_vault_cluster_targets.hosts
-    }
-  }
-
-  step "verify_write_test_data" {
-    module = module.vault_verify_write_data
-    depends_on = [
-      step.create_vault_cluster,
-      step.get_vault_cluster_ips
-    ]
-
-    providers = {
-      enos = local.enos_provider[matrix.distro]
-    }
-
-    variables {
-      leader_public_ip  = step.get_vault_cluster_ips.leader_public_ip
-      leader_private_ip = step.get_vault_cluster_ips.leader_private_ip
-      vault_instances   = step.create_vault_cluster_targets.hosts
-      vault_install_dir = local.vault_install_dir
-      vault_root_token  = step.create_vault_cluster.root_token
+      vault_instances   = step.create_vault_cluster.vault_instances
+      vault_root_token  = step.create_vault_cluster.vault_root_token
     }
   }
 
@@ -276,8 +204,8 @@ scenario "smoke" {
 
     variables {
       vault_install_dir = local.vault_install_dir
-      vault_instances   = step.create_vault_cluster_targets.hosts
-      vault_root_token  = step.create_vault_cluster.root_token
+      vault_instances   = step.create_vault_cluster.vault_instances
+      vault_root_token  = step.create_vault_cluster.vault_root_token
     }
   }
 
@@ -292,24 +220,7 @@ scenario "smoke" {
     variables {
       vault_edition     = matrix.edition
       vault_install_dir = local.vault_install_dir
-      vault_instances   = step.create_vault_cluster_targets.hosts
-    }
-  }
-
-  step "verify_read_test_data" {
-    module = module.vault_verify_read_data
-    depends_on = [
-      step.verify_write_test_data,
-      step.verify_replication
-    ]
-
-    providers = {
-      enos = local.enos_provider[matrix.distro]
-    }
-
-    variables {
-      node_public_ips   = step.get_vault_cluster_ips.follower_public_ips
-      vault_install_dir = local.vault_install_dir
+      vault_instances   = step.create_vault_cluster.vault_instances
     }
   }
 
@@ -322,63 +233,63 @@ scenario "smoke" {
     }
 
     variables {
-      vault_instances   = step.create_vault_cluster_targets.hosts
+      vault_instances   = step.create_vault_cluster.vault_instances
       vault_install_dir = local.vault_install_dir
     }
   }
 
-  output "awskms_unseal_key_arn" {
-    description = "The Vault cluster KMS key arn"
-    value       = step.create_vpc.kms_key_arn
+  step "verify_write_test_data" {
+    module     = module.vault_verify_write_test_data
+    depends_on = [step.create_vault_cluster]
+
+    providers = {
+      enos = local.enos_provider[matrix.distro]
+    }
+
+    variables {
+      vault_instances   = step.create_vault_cluster.vault_instances
+      vault_install_dir = local.vault_install_dir
+      vault_root_token  = step.create_vault_cluster.vault_root_token
+    }
   }
 
-  output "cluster_name" {
-    description = "The Vault cluster name"
-    value       = step.create_vault_cluster.cluster_name
+  output "vault_cluster_instance_ids" {
+    description = "The Vault cluster instance IDs"
+    value       = step.create_vault_cluster.instance_ids
   }
 
-  output "hosts" {
-    description = "The Vault cluster target hosts"
-    value       = step.create_vault_cluster.target_hosts
-  }
-
-  output "private_ips" {
-    description = "The Vault cluster private IPs"
-    value       = step.create_vault_cluster.private_ips
-  }
-
-  output "public_ips" {
+  output "vault_cluster_pub_ips" {
     description = "The Vault cluster public IPs"
-    value       = step.create_vault_cluster.public_ips
+    value       = step.create_vault_cluster.instance_public_ips
   }
 
-  output "root_token" {
+  output "vault_cluster_priv_ips" {
+    description = "The Vault cluster private IPs"
+    value       = step.create_vault_cluster.instance_private_ips
+  }
+
+  output "vault_cluster_key_id" {
+    description = "The Vault cluster Key ID"
+    value       = step.create_vault_cluster.key_id
+  }
+
+  output "vault_cluster_root_token" {
     description = "The Vault cluster root token"
-    value       = step.create_vault_cluster.root_token
+    value       = step.create_vault_cluster.vault_root_token
   }
 
-  output "recovery_key_shares" {
-    description = "The Vault cluster recovery key shares"
-    value       = step.create_vault_cluster.recovery_key_shares
-  }
-
-  output "recovery_keys_b64" {
-    description = "The Vault cluster recovery keys b64"
-    value       = step.create_vault_cluster.recovery_keys_b64
-  }
-
-  output "recovery_keys_hex" {
-    description = "The Vault cluster recovery keys hex"
-    value       = step.create_vault_cluster.recovery_keys_hex
-  }
-
-  output "unseal_keys_b64" {
+  output "vault_cluster_unseal_keys_b64" {
     description = "The Vault cluster unseal keys"
-    value       = step.create_vault_cluster.unseal_keys_b64
+    value       = step.create_vault_cluster.vault_unseal_keys_b64
   }
 
-  output "unseal_keys_hex" {
+  output "vault_cluster_unseal_keys_hex" {
     description = "The Vault cluster unseal keys hex"
-    value       = step.create_vault_cluster.unseal_keys_hex
+    value       = step.create_vault_cluster.vault_unseal_keys_hex
+  }
+
+  output "vault_cluster_tag" {
+    description = "The Vault cluster tag"
+    value       = step.create_vault_cluster.vault_cluster_tag
   }
 }

@@ -8,12 +8,12 @@ EXTENDED_TEST_TIMEOUT=60m
 INTEG_TEST_TIMEOUT=120m
 VETARGS?=-asmdecl -atomic -bool -buildtags -copylocks -methods -nilfunc -printf -rangeloops -shift -structtags -unsafeptr
 EXTERNAL_TOOLS_CI=\
-	golang.org/x/tools/cmd/goimports \
-	github.com/golangci/revgrep/cmd/revgrep
+	golang.org/x/tools/cmd/goimports
 EXTERNAL_TOOLS=\
 	github.com/client9/misspell/cmd/misspell
 GOFMT_FILES?=$$(find . -name '*.go' | grep -v pb.go | grep -v vendor)
 SED?=$(shell command -v gsed || command -v sed)
+
 
 GO_VERSION_MIN=$$(cat $(CURDIR)/.go-version)
 PROTOC_VERSION_MIN=3.21.5
@@ -30,16 +30,13 @@ default: dev
 bin: prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS) ui' sh -c "'$(CURDIR)/scripts/build.sh'"
 
-testonly: 
-	$(eval BUILD_TAGS += testonly)
-    
 # dev creates binaries for testing Vault locally. These are put
 # into ./bin/ as well as $GOPATH/bin
-dev: prep testonly
+dev: prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS)' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
-dev-ui: assetcheck prep testonly
+dev-ui: assetcheck prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS) ui' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
-dev-dynamic: prep testonly
+dev-dynamic: prep
 	@CGO_ENABLED=1 BUILD_TAGS='$(BUILD_TAGS)' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
 
 # *-mem variants will enable memory profiling which will write snapshots of heap usage
@@ -54,14 +51,14 @@ dev-dynamic-mem: dev-dynamic
 
 # Creates a Docker image by adding the compiled linux/amd64 binary found in ./bin.
 # The resulting image is tagged "vault:dev".
-docker-dev: prep testonly
+docker-dev: prep
 	docker build --build-arg VERSION=$(GO_VERSION_MIN) --build-arg BUILD_TAGS="$(BUILD_TAGS)" -f scripts/docker/Dockerfile -t vault:dev .
 
-docker-dev-ui: prep testonly
+docker-dev-ui: prep
 	docker build --build-arg VERSION=$(GO_VERSION_MIN) --build-arg BUILD_TAGS="$(BUILD_TAGS)" -f scripts/docker/Dockerfile.ui -t vault:dev-ui .
 
 # test runs the unit tests and vets the code
-test: prep testonly
+test: prep
 	@CGO_ENABLED=$(CGO_ENABLED) \
 	VAULT_ADDR= \
 	VAULT_TOKEN= \
@@ -69,13 +66,13 @@ test: prep testonly
 	VAULT_ACC= \
 	$(GO_CMD) test -tags='$(BUILD_TAGS)' $(TEST) $(TESTARGS) -timeout=$(TEST_TIMEOUT) -parallel=20
 
-testcompile: prep testonly
+testcompile: prep
 	@for pkg in $(TEST) ; do \
 		$(GO_CMD) test -v -c -tags='$(BUILD_TAGS)' $$pkg -parallel=4 ; \
 	done
 
 # testacc runs acceptance tests
-testacc: prep testonly
+testacc: prep
 	@if [ "$(TEST)" = "./..." ]; then \
 		echo "ERROR: Set TEST to a specific package"; \
 		exit 1; \
@@ -83,7 +80,7 @@ testacc: prep testonly
 	VAULT_ACC=1 $(GO_CMD) test -tags='$(BUILD_TAGS)' $(TEST) -v $(TESTARGS) -timeout=$(EXTENDED_TEST_TIMEOUT)
 
 # testrace runs the race checker
-testrace: prep testonly
+testrace: prep
 	@CGO_ENABLED=1 \
 	VAULT_ADDR= \
 	VAULT_TOKEN= \
@@ -178,7 +175,6 @@ proto: bootstrap
 	@sh -c "'$(CURDIR)/scripts/protocversioncheck.sh' '$(PROTOC_VERSION_MIN)'"
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/*.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/activity/activity_log.proto
-	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/activity/generation/generate_data.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative helper/storagepacker/types.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative helper/forwarding/types.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative sdk/logical/*.proto
@@ -190,7 +186,7 @@ proto: bootstrap
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative sdk/plugin/pb/*.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/tokens/token.proto
 	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative sdk/helper/pluginutil/*.proto
-	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/hcp_link/proto/*/*.proto
+	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative vault/hcp_link/proto/node_status/*.proto
 
 	# No additional sed expressions should be added to this list. Going forward
 	# we should just use the variable names choosen by protobuf. These are left
@@ -207,7 +203,7 @@ fmtcheck:
 #@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
 
 fmt:
-	find . -name '*.go' | grep -v pb.go | grep -v vendor | xargs go run mvdan.cc/gofumpt -w
+	find . -name '*.go' | grep -v pb.go | grep -v vendor | xargs gofumpt -w
 
 semgrep:
 	semgrep --include '*.go' --exclude 'vendor' -a -f tools/semgrep .
@@ -247,76 +243,59 @@ hana-database-plugin:
 mongodb-database-plugin:
 	@CGO_ENABLED=0 $(GO_CMD) build -o bin/mongodb-database-plugin ./plugins/database/mongodb/mongodb-database-plugin
 
-.PHONY: bin default prep test vet bootstrap ci-bootstrap fmt fmtcheck mysql-database-plugin mysql-legacy-database-plugin cassandra-database-plugin influxdb-database-plugin postgresql-database-plugin mssql-database-plugin hana-database-plugin mongodb-database-plugin ember-dist ember-dist-dev static-dist static-dist-dev assetcheck check-vault-in-path packages build build-ci semgrep semgrep-ci vet-godoctests ci-vet-godoctests
+.PHONY: ci-config
+ci-config:
+	@$(MAKE) -C .circleci ci-config
+.PHONY: ci-verify
+ci-verify:
+	@$(MAKE) -C .circleci ci-verify
+
+.PHONY: bin default prep test vet bootstrap ci-bootstrap fmt fmtcheck mysql-database-plugin mysql-legacy-database-plugin cassandra-database-plugin influxdb-database-plugin postgresql-database-plugin mssql-database-plugin hana-database-plugin mongodb-database-plugin ember-dist ember-dist-dev static-dist static-dist-dev assetcheck check-vault-in-path packages build build-ci semgrep semgrep-ci
 
 .NOTPARALLEL: ember-dist ember-dist-dev
 
-# These ci targets are used for used for building and testing in Github Actions
-# workflows and for Enos scenarios.
-.PHONY: ci-build
-ci-build:
-	@$(CURDIR)/scripts/ci-helper.sh build
+# These crt targets are used for release builds by .github/workflows/build.yml
+# and for artifact_source:local Enos scenario variants.
+.PHONY: crt-build
+crt-build:
+	@$(CURDIR)/scripts/crt-builder.sh build
 
-.PHONY: ci-build-ui
-ci-build-ui:
-	@$(CURDIR)/scripts/ci-helper.sh build-ui
+.PHONY: crt-build-ui
+crt-build-ui:
+	@$(CURDIR)/scripts/crt-builder.sh build-ui
 
-.PHONY: ci-bundle
-ci-bundle:
-	@$(CURDIR)/scripts/ci-helper.sh bundle
+.PHONY: crt-bundle
+crt-bundle:
+	@$(CURDIR)/scripts/crt-builder.sh bundle
 
-.PHONY: ci-filter-matrix
-ci-filter-matrix:
-	@$(CURDIR)/scripts/ci-helper.sh matrix-filter-file
+.PHONY: crt-get-artifact-basename
+crt-get-artifact-basename:
+	@$(CURDIR)/scripts/crt-builder.sh artifact-basename
 
-.PHONY: ci-get-artifact-basename
-ci-get-artifact-basename:
-	@$(CURDIR)/scripts/ci-helper.sh artifact-basename
+.PHONY: crt-get-date
+crt-get-date:
+	@$(CURDIR)/scripts/crt-builder.sh date
 
-.PHONY: ci-get-date
-ci-get-date:
-	@$(CURDIR)/scripts/ci-helper.sh date
+.PHONY: crt-get-revision
+crt-get-revision:
+	@$(CURDIR)/scripts/crt-builder.sh revision
 
-.PHONY: ci-get-matrix-group-id
-ci-get-matrix-group-id:
-	@$(CURDIR)/scripts/ci-helper.sh matrix-group-id
+.PHONY: crt-get-version
+crt-get-version:
+	@$(CURDIR)/scripts/crt-builder.sh version
 
-.PHONY: ci-get-revision
-ci-get-revision:
-	@$(CURDIR)/scripts/ci-helper.sh revision
+.PHONY: crt-get-version-base
+crt-get-version-base:
+	@$(CURDIR)/scripts/crt-builder.sh version-base
 
-.PHONY: ci-get-version
-ci-get-version:
-	@$(CURDIR)/scripts/ci-helper.sh version
+.PHONY: crt-get-version-pre
+crt-get-version-pre:
+	@$(CURDIR)/scripts/crt-builder.sh version-pre
 
-.PHONY: ci-get-version-base
-ci-get-version-base:
-	@$(CURDIR)/scripts/ci-helper.sh version-base
+.PHONY: crt-get-version-meta
+crt-get-version-meta:
+	@$(CURDIR)/scripts/crt-builder.sh version-meta
 
-.PHONY: ci-get-version-major
-ci-get-version-major:
-	@$(CURDIR)/scripts/ci-helper.sh version-major
-
-.PHONY: ci-get-version-meta
-ci-get-version-meta:
-	@$(CURDIR)/scripts/ci-helper.sh version-meta
-
-.PHONY: ci-get-version-minor
-ci-get-version-minor:
-	@$(CURDIR)/scripts/ci-helper.sh version-minor
-
-.PHONY: ci-get-version-package
-ci-get-version-package:
-	@$(CURDIR)/scripts/ci-helper.sh version-package
-
-.PHONY: ci-get-version-patch
-ci-get-version-patch:
-	@$(CURDIR)/scripts/ci-helper.sh version-patch
-
-.PHONY: ci-get-version-pre
-ci-get-version-pre:
-	@$(CURDIR)/scripts/ci-helper.sh version-pre
-
-.PHONY: ci-prepare-legal
-ci-prepare-legal:
-	@$(CURDIR)/scripts/ci-helper.sh prepare-legal
+.PHONY: crt-prepare-legal
+crt-prepare-legal:
+	@$(CURDIR)/scripts/crt-builder.sh prepare-legal

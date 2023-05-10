@@ -1,27 +1,27 @@
 import ApplicationAdapter from './application';
 
-export default class NamespaceAdapter extends ApplicationAdapter {
+export default ApplicationAdapter.extend({
   pathForType() {
     return 'namespaces';
-  }
+  },
   urlForFindAll(modelName, snapshot) {
     if (snapshot.adapterOptions && snapshot.adapterOptions.forUser) {
       return `/${this.urlPrefix()}/internal/ui/namespaces`;
     }
     return `/${this.urlPrefix()}/namespaces?list=true`;
-  }
+  },
 
   urlForCreateRecord(modelName, snapshot) {
     let id = snapshot.attr('path');
     return this.buildURL(modelName, id);
-  }
+  },
 
   createRecord(store, type, snapshot) {
-    const id = snapshot.attr('path');
-    return super.createRecord(...arguments).then(() => {
+    let id = snapshot.attr('path');
+    return this._super(...arguments).then(() => {
       return { id };
     });
-  }
+  },
 
   findAll(store, type, sinceToken, snapshot) {
     if (snapshot.adapterOptions && typeof snapshot.adapterOptions.namespace !== 'undefined') {
@@ -29,9 +29,9 @@ export default class NamespaceAdapter extends ApplicationAdapter {
         namespace: snapshot.adapterOptions.namespace,
       });
     }
-    return super.findAll(...arguments);
-  }
+    return this._super(...arguments);
+  },
   query() {
     return this.ajax(`/${this.urlPrefix()}/namespaces?list=true`);
-  }
-}
+  },
+});

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -18,8 +17,6 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/vault"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,7 +162,7 @@ func TestCRLFetch(t *testing.T) {
 
 	b.crlUpdateMutex.Lock()
 	if len(b.crls["testcrl"].Serials) != 1 {
-		t.Fatalf("wrong number of certs in CRL got %d, expected 1", len(b.crls["testcrl"].Serials))
+		t.Fatalf("wrong number of certs in CRL")
 	}
 	b.crlUpdateMutex.Unlock()
 
@@ -191,14 +188,11 @@ func TestCRLFetch(t *testing.T) {
 
 	// Give ourselves a little extra room on slower CI systems to ensure we
 	// can fetch the new CRL.
-	vault.RetryUntil(t, 2*time.Second, func() error {
-		b.crlUpdateMutex.Lock()
-		defer b.crlUpdateMutex.Unlock()
+	time.Sleep(150 * time.Millisecond)
 
-		serialCount := len(b.crls["testcrl"].Serials)
-		if serialCount != 2 {
-			return fmt.Errorf("CRL refresh did not occur serial count %d", serialCount)
-		}
-		return nil
-	})
+	b.crlUpdateMutex.Lock()
+	if len(b.crls["testcrl"].Serials) != 2 {
+		t.Fatalf("wrong number of certs in CRL")
+	}
+	b.crlUpdateMutex.Unlock()
 }

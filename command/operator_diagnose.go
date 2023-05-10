@@ -15,6 +15,7 @@ import (
 
 	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/hashicorp/consul/api"
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-secure-stdlib/reloadutil"
@@ -160,7 +161,7 @@ func (c *OperatorDiagnoseCommand) RunWithParsedFlags() int {
 
 	if c.diagnose == nil {
 		if c.flagFormat == "json" {
-			c.diagnose = diagnose.New(io.Discard)
+			c.diagnose = diagnose.New(&ioutils.NopWriter{})
 		} else {
 			c.UI.Output(version.GetVersion().FullVersionNumber(true))
 			c.diagnose = diagnose.New(os.Stdout)

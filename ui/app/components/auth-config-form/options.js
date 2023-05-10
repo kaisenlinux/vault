@@ -19,6 +19,7 @@ import { waitFor } from '@ember/test-waiters';
 
 export default AuthConfigComponent.extend({
   router: service(),
+  wizard: service(),
   saveModel: task(
     waitFor(function* () {
       let data = this.model.config.serialize();
@@ -45,6 +46,9 @@ export default AuthConfigComponent.extend({
           // do nothing
         }
         return;
+      }
+      if (this.wizard.currentMachine === 'authentication' && this.wizard.featureState === 'config') {
+        this.wizard.transitionFeatureMachine(this.wizard.featureState, 'CONTINUE');
       }
       this.router.transitionTo('vault.cluster.access.methods').followRedirects();
       this.flashMessages.success('The configuration was saved successfully.');

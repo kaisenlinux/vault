@@ -29,13 +29,11 @@ export default Mixin.create({
       targetRoute !== transition.targetName &&
       targetRoute !== this.router.currentRouteName
     ) {
-      // there may be query params so check for inclusion rather than exact match
-      const isExcluded = EXCLUDED_REDIRECT_URLS.find((url) => this.router.currentURL?.includes(url));
       if (
         // only want to redirect if we're going to authenticate
         targetRoute === AUTH &&
         transition.targetName !== CLUSTER_INDEX &&
-        !isExcluded
+        !EXCLUDED_REDIRECT_URLS.includes(this.router.currentURL)
       ) {
         return this.transitionTo(targetRoute, { queryParams: { redirect_to: this.router.currentURL } });
       }

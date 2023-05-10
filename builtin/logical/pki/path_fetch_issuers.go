@@ -75,16 +75,11 @@ their identifier and their name (if set).
 )
 
 func pathGetIssuer(b *backend) *framework.Path {
-	pattern := "issuer/" + framework.GenericNameRegex(issuerRefParam) + "$"
-	return buildPathIssuer(b, pattern)
-}
-
-func pathGetUnauthedIssuer(b *backend) *framework.Path {
-	pattern := "issuer/" + framework.GenericNameRegex(issuerRefParam) + "/(json|der|pem)$"
+	pattern := "issuer/" + framework.GenericNameRegex(issuerRefParam) + "(/der|/pem|/json)?"
 	return buildPathGetIssuer(b, pattern)
 }
 
-func buildPathIssuer(b *backend, pattern string) *framework.Path {
+func buildPathGetIssuer(b *backend, pattern string) *framework.Path {
 	fields := map[string]*framework.FieldSchema{}
 	fields = addIssuerRefNameFields(fields)
 
@@ -166,26 +161,6 @@ for the OCSP servers attribute. See also RFC 5280 Section 4.2.2.1.`,
 				// Read more about why these flags are set in backend.go.
 				ForwardPerformanceStandby:   true,
 				ForwardPerformanceSecondary: true,
-			},
-		},
-
-		HelpSynopsis:    pathGetIssuerHelpSyn,
-		HelpDescription: pathGetIssuerHelpDesc,
-	}
-}
-
-func buildPathGetIssuer(b *backend, pattern string) *framework.Path {
-	fields := map[string]*framework.FieldSchema{}
-	fields = addIssuerRefField(fields)
-
-	return &framework.Path{
-		// Returns a JSON entry.
-		Pattern: pattern,
-		Fields:  fields,
-
-		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.ReadOperation: &framework.PathOperation{
-				Callback: b.pathGetIssuer,
 			},
 		},
 
@@ -553,7 +528,7 @@ func (b *backend) pathPatchIssuer(ctx context.Context, req *logical.Request, dat
 	var newName string
 	if ok {
 		newName, err = getIssuerName(sc, data)
-		if err != nil && err != errIssuerNameInUse && err != errIssuerNameIsEmpty {
+		if err != nil && err != errIssuerNameInUse {
 			// If the error is name already in use, and the new name is the
 			// old name for this issuer, we're not actually updating the
 			// issuer name (or causing a conflict) -- so don't err out. Other
@@ -579,7 +554,7 @@ func (b *backend) pathPatchIssuer(ctx context.Context, req *logical.Request, dat
 	}
 
 	// Leaf Not After Changes
-	rawLeafBehaviorData, ok := data.GetOk("leaf_not_after_behavior")
+	rawLeafBehaviorData, ok := data.GetOk("leaf_not_after_behaivor")
 	if ok {
 		rawLeafBehavior := rawLeafBehaviorData.(string)
 		var newLeafBehavior certutil.NotAfterBehavior

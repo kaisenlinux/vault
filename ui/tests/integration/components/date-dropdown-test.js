@@ -1,5 +1,5 @@
 /* eslint qunit/no-conditional-assertions: "warn" */
-import { module, skip, test } from 'qunit';
+import { module, test } from 'qunit';
 import { setupRenderingTest } from 'ember-qunit';
 import { click, render } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
@@ -43,8 +43,7 @@ module('Integration | Component | date-dropdown', function (hooks) {
     assert.dom('[data-test-date-dropdown-submit]').hasText('Save', 'button renders passed in text');
   });
 
-  // skip until https://github.com/hashicorp/vault/pull/17575 is merged which refactors these tests and fixes flakiness
-  skip('it renders dropdown and selects month and year', async function (assert) {
+  test('it renders dropdown and selects month and year', async function (assert) {
     assert.expect(27);
     let parentAction = (month, year) => {
       assert.equal(month, 'January', 'sends correct month to parent callback');
@@ -93,7 +92,7 @@ module('Integration | Component | date-dropdown', function (hooks) {
     await click(submitButton);
   });
 
-  skip('it disables correct years when selecting month first', async function (assert) {
+  test('it disables correct years when selecting month first', async function (assert) {
     assert.expect(60);
     await render(hbs`
     <div class="is-flex-align-baseline">
@@ -129,7 +128,7 @@ module('Integration | Component | date-dropdown', function (hooks) {
     }
   });
 
-  skip('it disables correct months when selecting year first', async function (assert) {
+  test('it disables correct months when selecting year first', async function (assert) {
     assert.expect(60);
     await render(hbs`
     <div class="is-flex-align-baseline">

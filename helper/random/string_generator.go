@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"sort"
-	"sync"
 	"time"
 	"unicode"
 
@@ -77,8 +76,7 @@ type StringGenerator struct {
 	Rules serializableRules `mapstructure:"-" json:"rule"` // This is "rule" in JSON so it matches the HCL property type
 
 	// CharsetRule to choose runes from. This is computed from the rules, not directly configurable
-	charset     runes
-	charsetLock sync.RWMutex
+	charset runes
 }
 
 // Generate a random string from the charset and adhering to the provided rules.
@@ -118,10 +116,7 @@ func (g *StringGenerator) generate(rng io.Reader) (str string, err error) {
 	// If performance improvements need to be made, this can be changed to read a batch of
 	// potential strings at once rather than one at a time. This will significantly
 	// improve performance, but at the cost of added complexity.
-	g.charsetLock.RLock()
-	charset := g.charset
-	g.charsetLock.RUnlock()
-	candidate, err := randomRunes(rng, charset, g.Length)
+	candidate, err := randomRunes(rng, g.charset, g.Length)
 	if err != nil {
 		return "", fmt.Errorf("unable to generate random characters: %w", err)
 	}
@@ -234,8 +229,6 @@ func (g *StringGenerator) validateConfig() (err error) {
 		merr = multierror.Append(merr, fmt.Errorf("specified rules require at least %d characters but %d is specified", minLen, g.Length))
 	}
 
-	g.charsetLock.Lock()
-	defer g.charsetLock.Unlock()
 	// Ensure we have a charset & all characters are printable
 	if len(g.charset) == 0 {
 		// Yes this is mutating the generator but this is done so we don't have to compute this on every generation

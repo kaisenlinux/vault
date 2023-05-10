@@ -1,9 +1,6 @@
 package consts
 
-// EnvVaultAllowPendingRemovalMounts allows Pending Removal builtins to be
-// mounted as if they are Deprecated to facilitate migration to supported
-// builtin plugins.
-const EnvVaultAllowPendingRemovalMounts = "VAULT_ALLOW_PENDING_REMOVAL_MOUNTS"
+const VaultAllowPendingRemovalMountsEnv = "VAULT_ALLOW_PENDING_REMOVAL_MOUNTS"
 
 // DeprecationStatus represents the current deprecation state for builtins
 type DeprecationStatus uint32

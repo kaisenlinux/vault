@@ -1,4 +1,3 @@
-/* eslint-disable qunit/no-conditional-assertions */
 /* eslint qunit/no-conditional-assertions: "warn" */
 import { module, test } from 'qunit';
 import { setupTest } from 'ember-qunit';
@@ -10,8 +9,8 @@ module('Unit | Model | role-jwt', function (hooks) {
   test('it exists', function (assert) {
     let model = this.owner.lookup('service:store').createRecord('role-jwt');
     assert.ok(!!model);
-    assert.strictEqual(model.providerName, null, 'no providerName');
-    assert.strictEqual(model.providerButtonComponent, null, 'no providerButtonComponent');
+    assert.equal(model.providerName, null, 'no providerName');
+    assert.equal(model.providerButtonComponent, null, 'no providerButtonComponent');
   });
 
   test('it computes providerName when known provider url match fails', function (assert) {
@@ -19,41 +18,28 @@ module('Unit | Model | role-jwt', function (hooks) {
       authUrl: 'http://example.com',
     });
 
-    assert.strictEqual(model.providerName, null, 'no providerName');
-    assert.strictEqual(model.providerButtonComponent, null, 'no providerButtonComponent');
+    assert.equal(model.providerName, null, 'no providerName');
+    assert.equal(model.providerButtonComponent, null, 'no providerButtonComponent');
   });
 
   test('it provides a providerName for listed known providers', function (assert) {
     assert.expect(12);
-    Object.keys(DOMAIN_STRINGS).forEach((domain) => {
-      const model = this.owner.lookup('service:store').createRecord('role-jwt', {
-        authUrl: `http://provider-${domain}`,
+    Object.keys(DOMAIN_STRINGS).forEach((domainPart) => {
+      let model = this.owner.lookup('service:store').createRecord('role-jwt', {
+        authUrl: `http://provider-${domainPart}.com`,
       });
 
-      const expectedName = DOMAIN_STRINGS[domain];
-      assert.strictEqual(model.providerName, expectedName, `computes providerName: ${expectedName}`);
+      let expectedName = DOMAIN_STRINGS[domainPart];
+      assert.equal(model.providerName, expectedName, `computes providerName: ${expectedName}`);
       if (PROVIDER_WITH_LOGO.includes(expectedName)) {
-        assert.strictEqual(
+        assert.equal(
           model.providerButtonComponent,
-          `auth-button-${expectedName.toLowerCase()}`,
-          `computes providerButtonComponent: ${domain}`
+          `auth-button-${domainPart}`,
+          `computes providerButtonComponent: ${domainPart}`
         );
       } else {
-        assert.strictEqual(
-          model.providerButtonComponent,
-          null,
-          `computes providerButtonComponent: ${domain}`
-        );
+        assert.equal(model.providerButtonComponent, null, `computes providerButtonComponent: ${domainPart}`);
       }
     });
-  });
-
-  test('it does not return provider unless domain matches completely', function (assert) {
-    assert.expect(2);
-    const model = this.owner.lookup('service:store').createRecord('role-jwt', {
-      authUrl: `http://custom-auth0-provider.com`,
-    });
-    assert.strictEqual(model.providerName, null, `no providerName for custom URL`);
-    assert.strictEqual(model.providerButtonComponent, null, 'no providerButtonComponent for custom URL');
   });
 });

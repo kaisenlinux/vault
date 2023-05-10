@@ -8,7 +8,6 @@
     "date-fns": "*",
     "@icholy/duration": "*",
     "base64-js": "*",
-    "dompurify": "*",
     "ember-auto-import": "*",
     "ember-basic-dropdown": "*",
     "ember-cli-babel": "*",

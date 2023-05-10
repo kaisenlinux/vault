@@ -717,10 +717,6 @@
         ]
       },
       {
-        "title": "<code>print</code>",
-        "path": "commands/print"
-      },
-      {
         "title": "<code>read</code>",
         "path": "commands/read"
       },
@@ -1436,8 +1432,8 @@
         "path": "plugins/plugin-management"
       },
       {
-        "title": "Integrations Library",
-        "href": "/vault/integrations"
+        "title": "Plugin Portal",
+        "path": "plugins/plugin-portal"
       }
     ]
   },
@@ -2086,10 +2082,6 @@
           {
             "title": "Overview",
             "path": "enterprise/pkcs11-provider"
-          },
-          {
-            "title": "AWS KMS XKS",
-            "path": "enterprise/pkcs11-provider/aws-xks"
           },
           {
             "title": "Oracle TDE",

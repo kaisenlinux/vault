@@ -1,10 +1,6 @@
 import ApplicationSerializer from './application';
 
-export default class NamespaceSerializer extends ApplicationSerializer {
-  attrs = {
-    path: { serialize: false },
-  };
-
+export default ApplicationSerializer.extend({
   normalizeList(payload) {
     const data = payload.data.keys
       ? payload.data.keys.map((key) => ({
@@ -15,7 +11,7 @@ export default class NamespaceSerializer extends ApplicationSerializer {
       : payload.data;
 
     return data;
-  }
+  },
 
   normalizeResponse(store, primaryModelClass, payload, id, requestType) {
     const nullResponses = ['deleteRecord', 'createRecord'];
@@ -23,6 +19,6 @@ export default class NamespaceSerializer extends ApplicationSerializer {
     let normalizedPayload = nullResponses.includes(requestType)
       ? { id: cid, path: cid }
       : this.normalizeList(payload);
-    return super.normalizeResponse(store, primaryModelClass, normalizedPayload, id, requestType);
-  }
-}
+    return this._super(store, primaryModelClass, normalizedPayload, id, requestType);
+  },
+});

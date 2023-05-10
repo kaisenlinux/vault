@@ -45,8 +45,9 @@ const testHelper = require('./test-helper');
   try {
     const testArgs = ['test', '-c', 'testem.enos.js'];
 
-    if (process.env.TEST_FILTER && process.env.TEST_FILTER.length > 0) {
-      testArgs.push('-f=' + process.env.TEST_FILTER);
+    if (process.env.TEST_FILTERS) {
+      const filters = JSON.parse(process.env.TEST_FILTERS).map((filter) => '-f=' + filter);
+      testArgs.push(...filters);
     }
 
     await testHelper.run('ember', [...testArgs, ...process.argv.slice(2)], false);

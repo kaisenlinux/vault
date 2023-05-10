@@ -4,11 +4,10 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"runtime/debug"
+	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/armon/go-metrics"
 	"github.com/hashicorp/vault/helper/forwarding"
 	"github.com/hashicorp/vault/physical/raft"
 	"github.com/hashicorp/vault/sdk/helper/consts"
@@ -41,8 +40,12 @@ func (s *forwardedRequestRPCServer) ForwardRequest(ctx context.Context, freq *fo
 
 	runRequest := func() {
 		defer func() {
+			// Logic here comes mostly from the Go source code
 			if err := recover(); err != nil {
-				s.core.logger.Error("panic serving forwarded request", "path", req.URL.Path, "error", err, "stacktrace", string(debug.Stack()))
+				const size = 64 << 10
+				buf := make([]byte, size)
+				buf = buf[:runtime.Stack(buf, false)]
+				s.core.logger.Error("panic serving forwarded request", "path", req.URL.Path, "error", err, "stacktrace", string(buf))
 			}
 		}()
 		s.handler.ServeHTTP(w, req)
@@ -132,9 +135,6 @@ func (c *forwardingClient) startHeartbeat() {
 			Mode:     "standby",
 		}
 		tick := func() {
-			labels := make([]metrics.Label, 0, 1)
-			defer metrics.MeasureSinceWithLabels([]string{"ha", "rpc", "client", "echo"}, time.Now(), labels)
-
 			req := &EchoRequest{
 				Message:     "ping",
 				ClusterAddr: clusterAddr,
@@ -149,14 +149,12 @@ func (c *forwardingClient) startHeartbeat() {
 				req.RaftDesiredSuffrage = raftBackend.DesiredSuffrage()
 				req.RaftRedundancyZone = raftBackend.RedundancyZone()
 				req.RaftUpgradeVersion = raftBackend.EffectiveVersion()
-				labels = append(labels, metrics.Label{Name: "peer_id", Value: raftBackend.NodeID()})
 			}
 
 			ctx, cancel := context.WithTimeout(c.echoContext, 2*time.Second)
 			resp, err := c.RequestForwardingClient.Echo(ctx, req)
 			cancel()
 			if err != nil {
-				metrics.IncrCounter([]string{"ha", "rpc", "client", "echo", "errors"}, 1)
 				c.core.logger.Debug("forwarding: error sending echo request to active node", "error", err)
 				return
 			}
