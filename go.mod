@@ -86,7 +86,7 @@ require (
 	github.com/hashicorp/go-secure-stdlib/gatedwriter v0.1.1
 	github.com/hashicorp/go-secure-stdlib/kv-builder v0.1.2
 	github.com/hashicorp/go-secure-stdlib/mlock v0.1.2
-	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.6
+	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.7
 	github.com/hashicorp/go-secure-stdlib/password v0.1.1
 	github.com/hashicorp/go-secure-stdlib/reloadutil v0.1.1
 	github.com/hashicorp/go-secure-stdlib/strutil v0.1.2
@@ -108,9 +108,9 @@ require (
 	github.com/hashicorp/vault-plugin-auth-centrify v0.13.0
 	github.com/hashicorp/vault-plugin-auth-cf v0.13.0
 	github.com/hashicorp/vault-plugin-auth-gcp v0.14.0
-	github.com/hashicorp/vault-plugin-auth-jwt v0.14.0
+	github.com/hashicorp/vault-plugin-auth-jwt v0.14.1
 	github.com/hashicorp/vault-plugin-auth-kerberos v0.8.0
-	github.com/hashicorp/vault-plugin-auth-kubernetes v0.14.0
+	github.com/hashicorp/vault-plugin-auth-kubernetes v0.14.1
 	github.com/hashicorp/vault-plugin-auth-oci v0.12.0
 	github.com/hashicorp/vault-plugin-database-couchbase v0.8.0
 	github.com/hashicorp/vault-plugin-database-elasticsearch v0.12.0
@@ -119,21 +119,21 @@ require (
 	github.com/hashicorp/vault-plugin-database-redis-elasticache v0.1.0
 	github.com/hashicorp/vault-plugin-database-snowflake v0.6.1
 	github.com/hashicorp/vault-plugin-mock v0.16.1
-	github.com/hashicorp/vault-plugin-secrets-ad v0.14.0
+	github.com/hashicorp/vault-plugin-secrets-ad v0.14.1
 	github.com/hashicorp/vault-plugin-secrets-alicloud v0.13.0
 	github.com/hashicorp/vault-plugin-secrets-azure v0.14.1
 	github.com/hashicorp/vault-plugin-secrets-gcp v0.14.1
 	github.com/hashicorp/vault-plugin-secrets-gcpkms v0.13.0
 	github.com/hashicorp/vault-plugin-secrets-kubernetes v0.2.0
-	github.com/hashicorp/vault-plugin-secrets-kv v0.13.0
+	github.com/hashicorp/vault-plugin-secrets-kv v0.13.3
 	github.com/hashicorp/vault-plugin-secrets-mongodbatlas v0.8.0
-	github.com/hashicorp/vault-plugin-secrets-openldap v0.9.0
+	github.com/hashicorp/vault-plugin-secrets-openldap v0.9.1
 	github.com/hashicorp/vault-plugin-secrets-terraform v0.6.0
 	github.com/hashicorp/vault-testing-stepwise v0.1.2
 	github.com/hashicorp/vault/api v1.8.0
 	github.com/hashicorp/vault/api/auth/approle v0.1.0
 	github.com/hashicorp/vault/api/auth/userpass v0.1.0
-	github.com/hashicorp/vault/sdk v0.6.1-0.20221102145943-1e9b0a1225c3
+	github.com/hashicorp/vault/sdk v0.6.1-0.20230330131800-3118e8fdcb73
 	github.com/influxdata/influxdb1-client v0.0.0-20200827194710-b269163b24ab
 	github.com/jackc/pgx/v4 v4.15.0
 	github.com/jcmturner/gokrb5/v8 v8.4.2
@@ -188,11 +188,11 @@ require (
 	go.opentelemetry.io/otel/trace v0.20.0
 	go.uber.org/atomic v1.9.0
 	go.uber.org/goleak v1.1.12
-	golang.org/x/crypto v0.0.0-20220817201139-bc19a97f63c8
-	golang.org/x/net v0.0.0-20220909164309-bea034e7d591
+	golang.org/x/crypto v0.6.0
+	golang.org/x/net v0.7.0
 	golang.org/x/oauth2 v0.0.0-20220524215830-622c5d57e401
-	golang.org/x/sys v0.0.0-20220913175220-63ea55921009
-	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
+	golang.org/x/sys v0.5.0
+	golang.org/x/term v0.5.0
 	golang.org/x/tools v0.1.12
 	google.golang.org/api v0.83.0
 	google.golang.org/grpc v1.47.0
@@ -201,6 +201,7 @@ require (
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce
 	gopkg.in/ory-am/dockertest.v3 v3.3.4
 	gopkg.in/square/go-jose.v2 v2.6.0
+	gotest.tools/gotestsum v1.9.0
 	k8s.io/utils v0.0.0-20220210201930-3a6ce19ff2f9
 	layeh.com/radius v0.0.0-20190322222518-890bc1058917
 	mvdan.cc/gofumpt v0.1.1
@@ -269,12 +270,14 @@ require (
 	github.com/dgryski/go-metro v0.0.0-20180109044635-280f6062b5bc // indirect
 	github.com/digitalocean/godo v1.7.5 // indirect
 	github.com/dimchansky/utfbom v1.1.1 // indirect
+	github.com/dnephin/pflag v1.0.7 // indirect
 	github.com/docker/cli v20.10.18+incompatible // indirect
 	github.com/docker/distribution v2.7.1+incompatible // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20210315054119-f66993602bf5 // indirect
 	github.com/evanphx/json-patch/v5 v5.6.0 // indirect
 	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
+	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/gabriel-vasile/mimetype v1.3.1 // indirect
 	github.com/gammazero/deque v0.0.0-20190130191400-2afb3858e9c7 // indirect
 	github.com/gammazero/workerpool v0.0.0-20190406235159-88d534f22b56 // indirect
@@ -410,7 +413,7 @@ require (
 	go.uber.org/zap v1.19.1 // indirect
 	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4 // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/text v0.7.0 // indirect
 	golang.org/x/time v0.0.0-20220411224347-583f2d630306 // indirect
 	golang.org/x/xerrors v0.0.0-20220517211312-f3a8303e98df // indirect
 	google.golang.org/appengine v1.6.7 // indirect
