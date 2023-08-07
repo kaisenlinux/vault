@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import AdapterError from '@ember-data/adapter/error';
 import { set } from '@ember/object';
 import Route from '@ember/routing/route';
@@ -17,7 +22,7 @@ export default Route.extend({
     const { section_name: section } = this.paramsFor(this.routeName);
     this._super(...arguments);
     controller.set('section', section);
-    let method = this.modelFor('vault.cluster.access.method');
+    const method = this.modelFor('vault.cluster.access.method');
     controller.set(
       'paths',
       method.paths.paths.filter((path) => path.navigation)

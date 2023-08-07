@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package command
 
 import (
@@ -321,4 +324,21 @@ func generateFlagWarnings(args []string) string {
 	} else {
 		return ""
 	}
+}
+
+func generateFlagErrors(f *FlagSets, opts ...ParseOptions) error {
+	if Format(f.ui) == "raw" {
+		canUseRaw := false
+		for _, opt := range opts {
+			if value, ok := opt.(ParseOptionAllowRawFormat); ok {
+				canUseRaw = bool(value)
+			}
+		}
+
+		if !canUseRaw {
+			return fmt.Errorf("This command does not support the -format=raw option.")
+		}
+	}
+
+	return nil
 }

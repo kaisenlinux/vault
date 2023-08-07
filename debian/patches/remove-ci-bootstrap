@@ -1,9 +1,9 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.10.0.orig/Makefile
-+++ vault-1.10.0/Makefile
-@@ -128,7 +128,7 @@ ci-bootstrap:
- 	done
+--- vault-1.14.1.orig/Makefile
++++ vault-1.14.1/Makefile
+@@ -172,7 +172,7 @@ ci-bootstrap: .ci-bootstrap
+ 	@touch .ci-bootstrap
  
  # bootstrap the build by downloading additional tools that may be used by devs
 -bootstrap: ci-bootstrap

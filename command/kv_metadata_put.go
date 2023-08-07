@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package command
 
 import (
@@ -33,7 +36,7 @@ func (c *KVMetadataPutCommand) Synopsis() string {
 
 func (c *KVMetadataPutCommand) Help() string {
 	helpText := `
-Usage: vault metadata kv put [options] KEY
+Usage: vault kv metadata put [options] KEY
 
   This command can be used to create a blank key in the key-value store or to
   update key configuration for a specified key.
@@ -196,7 +199,7 @@ func (c *KVMetadataPutCommand) Run(args []string) int {
 		return 1
 	}
 
-	fullPath := addPrefixToKVPath(partialPath, mountPath, "metadata")
+	fullPath := addPrefixToKVPath(partialPath, mountPath, "metadata", false)
 	data := map[string]interface{}{}
 
 	if c.flagMaxVersions >= 0 {

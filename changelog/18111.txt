@@ -1,3 +1,0 @@
-```release-note:bug
-secrets/gcp: Fixes duplicate service account key for rotate root on standby or secondary
-```

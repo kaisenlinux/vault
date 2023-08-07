@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package plugin
 
 import (
@@ -25,6 +28,8 @@ func newGRPCSystemView(conn *grpc.ClientConn) *gRPCSystemViewClient {
 		client: pb.NewSystemViewClient(conn),
 	}
 }
+
+var _ logical.SystemView = &gRPCSystemViewClient{}
 
 type gRPCSystemViewClient struct {
 	client pb.SystemViewClient
@@ -177,6 +182,15 @@ func (s *gRPCSystemViewClient) PluginEnv(ctx context.Context) (*logical.PluginEn
 	return reply.PluginEnvironment, nil
 }
 
+func (s *gRPCSystemViewClient) VaultVersion(ctx context.Context) (string, error) {
+	reply, err := s.client.PluginEnv(ctx, &pb.Empty{})
+	if err != nil {
+		return "", err
+	}
+
+	return reply.PluginEnvironment.VaultVersion, nil
+}
+
 func (s *gRPCSystemViewClient) GeneratePasswordFromPolicy(ctx context.Context, policyName string) (password string, err error) {
 	req := &pb.GeneratePasswordFromPolicyRequest{
 		PolicyName: policyName,
@@ -186,6 +200,15 @@ func (s *gRPCSystemViewClient) GeneratePasswordFromPolicy(ctx context.Context, p
 		return "", err
 	}
 	return resp.Password, nil
+}
+
+func (s gRPCSystemViewClient) ClusterID(ctx context.Context) (string, error) {
+	reply, err := s.client.ClusterInfo(ctx, &pb.Empty{})
+	if err != nil {
+		return "", err
+	}
+
+	return reply.ClusterID, nil
 }
 
 type gRPCSystemViewServer struct {
@@ -355,4 +378,19 @@ func (s *gRPCSystemViewServer) GeneratePasswordFromPolicy(ctx context.Context, r
 		Password: password,
 	}
 	return resp, nil
+}
+
+func (s *gRPCSystemViewServer) ClusterInfo(ctx context.Context, _ *pb.Empty) (*pb.ClusterInfoReply, error) {
+	if s.impl == nil {
+		return nil, errMissingSystemView
+	}
+
+	clusterId, err := s.impl.ClusterID(ctx)
+	if err != nil {
+		return &pb.ClusterInfoReply{}, status.Errorf(codes.Internal, "failed to fetch cluster id")
+	}
+
+	return &pb.ClusterInfoReply{
+		ClusterID: clusterId,
+	}, nil
 }

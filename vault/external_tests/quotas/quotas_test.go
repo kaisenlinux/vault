@@ -1,12 +1,15 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package quotas
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/vault/api"
+	"github.com/hashicorp/vault/sdk/helper/testhelpers/schema"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/require"
 
@@ -130,6 +133,8 @@ func waitForRemovalOrTimeout(c *api.Client, path string, tick, to time.Duration)
 
 func TestQuotas_RateLimit_DupName(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
+	opts.NoDefaultQuotas = true
+	opts.RequestResponseCallback = schema.ResponseValidatingCallback(t)
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -164,6 +169,8 @@ func TestQuotas_RateLimit_DupName(t *testing.T) {
 
 func TestQuotas_RateLimit_DupPath(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
+	opts.NoDefaultQuotas = true
+	opts.RequestResponseCallback = schema.ResponseValidatingCallback(t)
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -202,7 +209,8 @@ func TestQuotas_RateLimit_DupPath(t *testing.T) {
 
 func TestQuotas_RateLimitQuota_ExemptPaths(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
-
+	opts.NoDefaultQuotas = true
+	opts.RequestResponseCallback = schema.ResponseValidatingCallback(t)
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -253,7 +261,8 @@ func TestQuotas_RateLimitQuota_ExemptPaths(t *testing.T) {
 
 func TestQuotas_RateLimitQuota_DefaultExemptPaths(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
-
+	opts.NoDefaultQuotas = true
+	opts.RequestResponseCallback = schema.ResponseValidatingCallback(t)
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -267,22 +276,18 @@ func TestQuotas_RateLimitQuota_DefaultExemptPaths(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := client.NewRequest("GET", "/v1/sys/health")
-	resp, err := client.RawRequestWithContext(context.Background(), req)
+	resp, err := client.Logical().Read("sys/health")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.NotNil(t, resp.Body)
-	require.Equal(t, 200, resp.StatusCode)
+	require.NotNil(t, resp.Data)
 
 	// The second sys/health call should not fail as /v1/sys/health is
 	// part of the default exempt paths
-	req = client.NewRequest("GET", "/v1/sys/health")
-	resp, err = client.RawRequestWithContext(context.Background(), req)
+	resp, err = client.Logical().Read("sys/health")
 	require.NoError(t, err)
+	// If the response is nil, then we are being rate limited
 	require.NotNil(t, resp)
-	require.NotNil(t, resp.Body)
-	// If the response is not 200, then we are being rate limited
-	require.Equal(t, 200, resp.StatusCode)
+	require.NotNil(t, resp.Data)
 }
 
 func TestQuotas_RateLimitQuota_Mount(t *testing.T) {
@@ -375,6 +380,7 @@ func TestQuotas_RateLimitQuota_Mount(t *testing.T) {
 
 func TestQuotas_RateLimitQuota_MountPrecedence(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
+	opts.NoDefaultQuotas = true
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -461,6 +467,7 @@ func TestQuotas_RateLimitQuota_MountPrecedence(t *testing.T) {
 
 func TestQuotas_RateLimitQuota(t *testing.T) {
 	conf, opts := teststorage.ClusterSetup(coreConfig, nil, nil)
+	opts.NoDefaultQuotas = true
 	cluster := vault.NewTestCluster(t, conf, opts)
 	cluster.Start()
 	defer cluster.Cleanup()

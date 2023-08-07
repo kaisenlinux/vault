@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package ldaputil
 
 import (
@@ -171,7 +174,8 @@ var jsonConfigDefault = []byte(`
   "username_as_alias": false,
   "request_timeout": 90,
   "connection_timeout": 30,
-  "max_page_size": 2147483647,
+  "dereference_aliases": "never",
+  "max_page_size": 0,
   "CaseSensitiveNames": false,
   "ClientTLSCert": "",
   "ClientTLSKey": ""

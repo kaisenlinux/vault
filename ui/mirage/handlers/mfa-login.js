@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { Response } from 'miragejs';
 import Ember from 'ember';
 import fetch from 'fetch';
@@ -18,7 +23,7 @@ export const validationHandler = (schema, req) => {
       return new Response(404, {}, { errors: ['MFA Request ID not found'] });
     }
     // validate request body
-    for (let constraintId in mfa_payload) {
+    for (const constraintId in mfa_payload) {
       // ensure ids were passed in map
       const method = mfaRequest.methods.find(({ id }) => id === constraintId);
       if (!method) {
@@ -39,7 +44,7 @@ export const validationHandler = (schema, req) => {
               limit:
                 'maximum TOTP validation attempts 4 exceeded the allowed attempts 3. Please try again in 15 seconds',
             }[passcode] || 'failed to validate';
-          console.log(error);
+          console.log(error); // eslint-disable-line
           return new Response(403, {}, { errors: [error] });
         }
       } else if (passcode) {
@@ -49,7 +54,7 @@ export const validationHandler = (schema, req) => {
     }
     return authResponses[mfa_request_id];
   } catch (error) {
-    console.log(error);
+    console.log(error); // eslint-disable-line
     return new Response(500, {}, { errors: ['Mirage Handler Error: /sys/mfa/validate'] });
   }
 };
@@ -96,11 +101,7 @@ export default function (server) {
     } else if (user === 'mfa-k') {
       [mfa_constraints, methods] = generator([m('duo', true)]); // test duo passcode and prepending passcode= to user input
     }
-    const numbers = (length) =>
-      Math.random()
-        .toString()
-        .substring(2, length + 2);
-    const mfa_request_id = `${numbers(8)}-${numbers(4)}-${numbers(4)}-${numbers(4)}-${numbers(12)}`;
+    const mfa_request_id = crypto.randomUUID();
     const mfa_requirement = {
       mfa_request_id,
       mfa_constraints,

@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package plugin
 
 import (
@@ -111,10 +114,6 @@ func TestSystem_GRPC_replicationState(t *testing.T) {
 	if !reflect.DeepEqual(expected, actual) {
 		t.Fatalf("expected: %v, got: %v", expected, actual)
 	}
-}
-
-func TestSystem_GRPC_responseWrapData(t *testing.T) {
-	t.SkipNow()
 }
 
 func TestSystem_GRPC_lookupPlugin(t *testing.T) {

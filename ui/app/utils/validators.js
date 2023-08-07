@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { isPresent } from '@ember/utils';
 
 export const presence = (value) => isPresent(value);
@@ -21,7 +26,7 @@ export const number = (value, { nullable = false } = {}) => {
 };
 
 export const containsWhiteSpace = (value) => {
-  let validation = new RegExp('\\s', 'g'); // search for whitespace
+  const validation = new RegExp('\\s', 'g'); // search for whitespace
   return !validation.test(value);
 };
 

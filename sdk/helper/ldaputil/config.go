@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package ldaputil
 
 import (
@@ -6,7 +9,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"text/template"
 
@@ -14,7 +16,16 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 
 	"github.com/hashicorp/errwrap"
+
+	"github.com/go-ldap/ldap/v3"
 )
+
+var ldapDerefAliasMap = map[string]int{
+	"never":     ldap.NeverDerefAliases,
+	"finding":   ldap.DerefFindingBaseObj,
+	"searching": ldap.DerefInSearching,
+	"always":    ldap.DerefAlways,
+}
 
 // ConfigFields returns all the config fields that can potentially be used by the LDAP client.
 // Not all fields will be used by every integration.
@@ -234,10 +245,17 @@ Default: ({{.UserAttr}}={{.Username}})`,
 			Default:     "30s",
 		},
 
+		"dereference_aliases": {
+			Type:          framework.TypeString,
+			Description:   "When aliases should be dereferenced on search operations. Accepted values are 'never', 'finding', 'searching', 'always'. Defaults to 'never'.",
+			Default:       "never",
+			AllowedValues: []interface{}{"never", "finding", "searching", "always"},
+		},
+
 		"max_page_size": {
 			Type:        framework.TypeInt,
-			Description: "The maximum number of results to return for a single paged query. If not set, the server default will be used for paged searches. A requested max_page_size of 0 is interpreted as no limit by LDAP servers. If set to a negative value, search requests will not be paged.",
-			Default:     math.MaxInt32,
+			Description: "If set to a value greater than 0, the LDAP backend will use the LDAP server's paged search control to request pages of up to the given size. This can be used to avoid hitting the LDAP server's maximum result size limit. Otherwise, the LDAP backend will not use the paged search control.",
+			Default:     0,
 		},
 	}
 }
@@ -409,6 +427,10 @@ func NewConfigEntry(existing *ConfigEntry, d *framework.FieldData) (*ConfigEntry
 		cfg.ConnectionTimeout = d.Get("connection_timeout").(int)
 	}
 
+	if _, ok := d.Raw["dereference_aliases"]; ok || !hadExisting {
+		cfg.DerefAliases = d.Get("dereference_aliases").(string)
+	}
+
 	if _, ok := d.Raw["max_page_size"]; ok || !hadExisting {
 		cfg.MaximumPageSize = d.Get("max_page_size").(int)
 	}
@@ -440,6 +462,7 @@ type ConfigEntry struct {
 	UsePre111GroupCNBehavior *bool  `json:"use_pre111_group_cn_behavior"`
 	RequestTimeout           int    `json:"request_timeout"`
 	ConnectionTimeout        int    `json:"connection_timeout"`
+	DerefAliases             string `json:"dereference_aliases"`
 	MaximumPageSize          int    `json:"max_page_size"`
 
 	// These json tags deviate from snake case because there was a past issue
@@ -480,6 +503,7 @@ func (c *ConfigEntry) PasswordlessMap() map[string]interface{} {
 		"request_timeout":        c.RequestTimeout,
 		"connection_timeout":     c.ConnectionTimeout,
 		"username_as_alias":      c.UsernameAsAlias,
+		"dereference_aliases":    c.DerefAliases,
 		"max_page_size":          c.MaximumPageSize,
 	}
 	if c.CaseSensitiveNames != nil {

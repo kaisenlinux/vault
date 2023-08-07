@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package cert
 
 import (
@@ -15,11 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/vault/helper/testhelpers/corehelpers"
+
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/vault"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -191,7 +194,7 @@ func TestCRLFetch(t *testing.T) {
 
 	// Give ourselves a little extra room on slower CI systems to ensure we
 	// can fetch the new CRL.
-	vault.RetryUntil(t, 2*time.Second, func() error {
+	corehelpers.RetryUntil(t, 2*time.Second, func() error {
 		b.crlUpdateMutex.Lock()
 		defer b.crlUpdateMutex.Unlock()
 

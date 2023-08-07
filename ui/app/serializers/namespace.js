@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import ApplicationSerializer from './application';
 
 export default class NamespaceSerializer extends ApplicationSerializer {
@@ -19,8 +24,8 @@ export default class NamespaceSerializer extends ApplicationSerializer {
 
   normalizeResponse(store, primaryModelClass, payload, id, requestType) {
     const nullResponses = ['deleteRecord', 'createRecord'];
-    let cid = (id || payload.id || '').replace(/\/$/, '');
-    let normalizedPayload = nullResponses.includes(requestType)
+    const cid = (id || payload.id || '').replace(/\/$/, '');
+    const normalizedPayload = nullResponses.includes(requestType)
       ? { id: cid, path: cid }
       : this.normalizeList(payload);
     return super.normalizeResponse(store, primaryModelClass, normalizedPayload, id, requestType);

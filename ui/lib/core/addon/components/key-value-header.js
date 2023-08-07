@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import Component from '@glimmer/component';
 import utils from 'vault/lib/key-utils';
 import { encodePath } from 'vault/utils/path-encoding-helpers';
@@ -40,7 +45,7 @@ export default class KeyValueHeader extends Component {
   }
 
   get secretPath() {
-    let crumbs = [];
+    const crumbs = [];
     const root = this.args.root;
     const baseKey = this.args.baseKey?.display || this.args.baseKey?.id;
     const baseKeyModel = encodePath(this.args.baseKey?.id);
@@ -78,7 +83,7 @@ export default class KeyValueHeader extends Component {
         label: parts[index],
         text: this.stripTrailingSlash(parts[index]),
         path: path,
-        model: ancestor,
+        model: encodePath(ancestor),
       });
     });
 

@@ -1,3 +1,11 @@
+vault (1.14.1-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.14.1 version
+  * Remove golang-go as package dependancy
+  * Update the conffile vault.env
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Mon, 07 Aug 2023 23:30:11 +0100
+
 vault (1.12.6-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.12.6 version

@@ -9,14 +9,16 @@ INTEG_TEST_TIMEOUT=120m
 VETARGS?=-asmdecl -atomic -bool -buildtags -copylocks -methods -nilfunc -printf -rangeloops -shift -structtags -unsafeptr
 EXTERNAL_TOOLS_CI=\
 	golang.org/x/tools/cmd/goimports \
-	github.com/golangci/revgrep/cmd/revgrep
+	github.com/golangci/revgrep/cmd/revgrep \
+	mvdan.cc/gofumpt \
+	honnef.co/go/tools/cmd/staticcheck
 EXTERNAL_TOOLS=\
 	github.com/client9/misspell/cmd/misspell
 GOFMT_FILES?=$$(find . -name '*.go' | grep -v pb.go | grep -v vendor)
 SED?=$(shell command -v gsed || command -v sed)
 
 GO_VERSION_MIN=$$(cat $(CURDIR)/.go-version)
-PROTOC_VERSION_MIN=3.21.5
+PROTOC_VERSION_MIN=3.21.12
 GO_CMD?=go
 CGO_ENABLED?=0
 ifneq ($(FDB_ENABLED), )
@@ -30,16 +32,16 @@ default: dev
 bin: prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS) ui' sh -c "'$(CURDIR)/scripts/build.sh'"
 
-testonly: 
-	$(eval BUILD_TAGS += testonly)
-    
 # dev creates binaries for testing Vault locally. These are put
 # into ./bin/ as well as $GOPATH/bin
-dev: prep testonly
+dev: BUILD_TAGS+=testonly
+dev: prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS)' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
-dev-ui: assetcheck prep testonly
+dev-ui: BUILD_TAGS+=testonly
+dev-ui: assetcheck prep
 	@CGO_ENABLED=$(CGO_ENABLED) BUILD_TAGS='$(BUILD_TAGS) ui' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
-dev-dynamic: prep testonly
+dev-dynamic: BUILD_TAGS+=testonly
+dev-dynamic: prep
 	@CGO_ENABLED=1 BUILD_TAGS='$(BUILD_TAGS)' VAULT_DEV_BUILD=1 sh -c "'$(CURDIR)/scripts/build.sh'"
 
 # *-mem variants will enable memory profiling which will write snapshots of heap usage
@@ -54,14 +56,17 @@ dev-dynamic-mem: dev-dynamic
 
 # Creates a Docker image by adding the compiled linux/amd64 binary found in ./bin.
 # The resulting image is tagged "vault:dev".
-docker-dev: prep testonly
+docker-dev: BUILD_TAGS+=testonly
+docker-dev: prep
 	docker build --build-arg VERSION=$(GO_VERSION_MIN) --build-arg BUILD_TAGS="$(BUILD_TAGS)" -f scripts/docker/Dockerfile -t vault:dev .
 
-docker-dev-ui: prep testonly
+docker-dev-ui: BUILD_TAGS+=testonly
+docker-dev-ui: prep
 	docker build --build-arg VERSION=$(GO_VERSION_MIN) --build-arg BUILD_TAGS="$(BUILD_TAGS)" -f scripts/docker/Dockerfile.ui -t vault:dev-ui .
 
 # test runs the unit tests and vets the code
-test: prep testonly
+test: BUILD_TAGS+=testonly
+test: prep
 	@CGO_ENABLED=$(CGO_ENABLED) \
 	VAULT_ADDR= \
 	VAULT_TOKEN= \
@@ -69,13 +74,15 @@ test: prep testonly
 	VAULT_ACC= \
 	$(GO_CMD) test -tags='$(BUILD_TAGS)' $(TEST) $(TESTARGS) -timeout=$(TEST_TIMEOUT) -parallel=20
 
-testcompile: prep testonly
+testcompile: BUILD_TAGS+=testonly
+testcompile: prep
 	@for pkg in $(TEST) ; do \
 		$(GO_CMD) test -v -c -tags='$(BUILD_TAGS)' $$pkg -parallel=4 ; \
 	done
 
 # testacc runs acceptance tests
-testacc: prep testonly
+testacc: BUILD_TAGS+=testonly
+testacc: prep
 	@if [ "$(TEST)" = "./..." ]; then \
 		echo "ERROR: Set TEST to a specific package"; \
 		exit 1; \
@@ -83,7 +90,8 @@ testacc: prep testonly
 	VAULT_ACC=1 $(GO_CMD) test -tags='$(BUILD_TAGS)' $(TEST) -v $(TESTARGS) -timeout=$(EXTENDED_TEST_TIMEOUT)
 
 # testrace runs the race checker
-testrace: prep testonly
+testrace: BUILD_TAGS+=testonly
+testrace: prep
 	@CGO_ENABLED=1 \
 	VAULT_ADDR= \
 	VAULT_TOKEN= \
@@ -105,6 +113,31 @@ vet:
 			echo "and fix them if necessary before submitting the code for reviewal."; \
 		fi
 
+# deprecations runs staticcheck tool to look for deprecations. Checks entire code to see if it
+# has deprecated function, variable, constant or field
+deprecations: bootstrap prep
+	@BUILD_TAGS='$(BUILD_TAGS)' ./scripts/deprecations-checker.sh ""
+
+# ci-deprecations runs staticcheck tool to look for deprecations. All output gets piped to revgrep
+# which will only return an error if changes that is not on main has deprecated function, variable, constant or field
+ci-deprecations: ci-bootstrap prep
+	@BUILD_TAGS='$(BUILD_TAGS)' ./scripts/deprecations-checker.sh main
+
+tools/codechecker/.bin/codechecker:
+	@cd tools/codechecker && $(GO_CMD) build -o .bin/codechecker .
+
+# vet-codechecker runs our custom linters on the test functions. All output gets
+# piped to revgrep which will only return an error if new piece of code violates
+# the check
+vet-codechecker: bootstrap tools/codechecker/.bin/codechecker prep
+	@$(GO_CMD) vet -vettool=./tools/codechecker/.bin/codechecker -tags=$(BUILD_TAGS) ./... 2>&1 | revgrep
+
+# vet-codechecker runs our custom linters on the test functions. All output gets
+# piped to revgrep which will only return an error if new piece of code that is
+# not on main violates the check
+ci-vet-codechecker: ci-bootstrap tools/codechecker/.bin/codechecker prep
+	@$(GO_CMD) vet -vettool=./tools/codechecker/.bin/codechecker -tags=$(BUILD_TAGS) ./... 2>&1 | revgrep origin/main
+
 # lint runs vet plus a number of other checkers, it is more comprehensive, but louder
 lint:
 	@$(GO_CMD) list -f '{{.Dir}}' ./... | grep -v /vendor/ \
@@ -119,17 +152,24 @@ ci-lint:
 
 # prep runs `go generate` to build the dynamically generated
 # source files.
-prep: fmtcheck
+#
+# n.b.: prep used to depend on fmtcheck, but since fmtcheck is
+# now run as a pre-commit hook (and there's little value in
+# making every build run the formatter), we've removed that
+# dependency.
+prep:
 	@sh -c "'$(CURDIR)/scripts/goversioncheck.sh' '$(GO_VERSION_MIN)'"
-	@$(GO_CMD) generate $($(GO_CMD) list ./... | grep -v /vendor/)
+	@$(GO_CMD) generate $$($(GO_CMD) list ./... | grep -v /vendor/)
 	@if [ -d .git/hooks ]; then cp .hooks/* .git/hooks/; fi
 
 # bootstrap the build by downloading additional tools needed to build
-ci-bootstrap:
+ci-bootstrap: .ci-bootstrap
+.ci-bootstrap:
 	@for tool in  $(EXTERNAL_TOOLS_CI) ; do \
 		echo "Installing/Updating $$tool" ; \
 		GO111MODULE=off $(GO_CMD) get -u $$tool; \
 	done
+	@touch .ci-bootstrap
 
 # bootstrap the build by downloading additional tools that may be used by devs
 bootstrap: ci-bootstrap
@@ -145,7 +185,7 @@ static-assets-dir:
 
 install-ui-dependencies:
 	@echo "--> Installing JavaScript assets"
-	@cd ui && yarn --ignore-optional
+	@cd ui && yarn
 
 test-ember: install-ui-dependencies
 	@echo "--> Running ember tests"
@@ -195,18 +235,17 @@ proto: bootstrap
 	# No additional sed expressions should be added to this list. Going forward
 	# we should just use the variable names choosen by protobuf. These are left
 	# here for backwards compatability, namely for SDK compilation.
-	$(SED) -i -e 's/Id/ID/' vault/request_forwarding_service.pb.go
-	$(SED) -i -e 's/Idp/IDP/' -e 's/Url/URL/' -e 's/Id/ID/' -e 's/IDentity/Identity/' -e 's/EntityId/EntityID/' -e 's/Api/API/' -e 's/Qr/QR/' -e 's/Totp/TOTP/' -e 's/Mfa/MFA/' -e 's/Pingid/PingID/' -e 's/namespaceId/namespaceID/' -e 's/Ttl/TTL/' -e 's/BoundCidrs/BoundCIDRs/' helper/identity/types.pb.go helper/identity/mfa/types.pb.go helper/storagepacker/types.pb.go sdk/plugin/pb/backend.pb.go sdk/logical/identity.pb.go vault/activity/activity_log.pb.go
+	$(SED) -i -e 's/Id/ID/' -e 's/SPDX-License-IDentifier/SPDX-License-Identifier/' vault/request_forwarding_service.pb.go
+	$(SED) -i -e 's/Idp/IDP/' -e 's/Url/URL/' -e 's/Id/ID/' -e 's/IDentity/Identity/' -e 's/EntityId/EntityID/' -e 's/Api/API/' -e 's/Qr/QR/' -e 's/Totp/TOTP/' -e 's/Mfa/MFA/' -e 's/Pingid/PingID/' -e 's/namespaceId/namespaceID/' -e 's/Ttl/TTL/' -e 's/BoundCidrs/BoundCIDRs/' -e 's/SPDX-License-IDentifier/SPDX-License-Identifier/' helper/identity/types.pb.go helper/identity/mfa/types.pb.go helper/storagepacker/types.pb.go sdk/plugin/pb/backend.pb.go sdk/logical/identity.pb.go vault/activity/activity_log.pb.go
 
 	# This will inject the sentinel struct tags as decorated in the proto files.
 	protoc-go-inject-tag -input=./helper/identity/types.pb.go
 	protoc-go-inject-tag -input=./helper/identity/mfa/types.pb.go
 
 fmtcheck:
-	@true
-#@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
+	@sh -c "'$(CURDIR)/scripts/gofmtcheck.sh'"
 
-fmt:
+fmt: ci-bootstrap
 	find . -name '*.go' | grep -v pb.go | grep -v vendor | xargs go run mvdan.cc/gofumpt -w
 
 semgrep:

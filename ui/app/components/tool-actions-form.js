@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { match } from '@ember/object/computed';
 import { assign } from '@ember/polyfills';
 import { inject as service } from '@ember/service';
@@ -77,9 +82,9 @@ export default Component.extend(DEFAULTS, {
 
   handleSuccess(resp, action) {
     let props = {};
-    let secret = (resp && resp.data) || resp.auth;
+    const secret = (resp && resp.data) || resp.auth;
     if (secret && action === 'unwrap') {
-      let details = {
+      const details = {
         'Request ID': resp.request_id,
         'Lease ID': resp.lease_id || 'None',
         Renewable: resp.renewable ? 'Yes' : 'No',

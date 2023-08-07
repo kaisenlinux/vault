@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import Ember from 'ember';
 import { inject as service } from '@ember/service';
 // ARG NOTE: Once you remove outer-html after glimmerizing you can remove the outer-html component
@@ -57,8 +62,8 @@ export default Component.extend({
         // debounce
         yield timeout(Ember.testing ? 0 : WAIT_TIME);
       }
-      let path = this.selectedAuthPath || this.selectedAuthType;
-      let id = JSON.stringify([path, roleName]);
+      const path = this.selectedAuthPath || this.selectedAuthType;
+      const id = JSON.stringify([path, roleName]);
       let role = null;
       try {
         role = yield this.store.findRecord('role-jwt', id, { adapterOptions: { namespace: this.namespace } });
@@ -104,7 +109,7 @@ export default Component.extend({
     // ensure that postMessage event is from expected source
     while (true) {
       const event = yield waitForEvent(thisWindow, 'message');
-      if (event.data.source === 'oidc-callback' && event.isTrusted && event.origin === thisWindow.origin) {
+      if (event.origin === thisWindow.origin && event.isTrusted && event.data.source === 'oidc-callback') {
         return this.exchangeOIDC.perform(event.data, oidcWindow);
       }
       // continue to wait for the correct message
@@ -134,11 +139,11 @@ export default Component.extend({
 
     let { namespace, path, state, code } = oidcState;
 
-    // The namespace can be either be passed as a query paramter, or be embedded
+    // The namespace can be either be passed as a query parameter, or be embedded
     // in the state param in the format `<state_id>,ns=<namespace>`. So if
     // `namespace` is empty, check for namespace in state as well.
     if (namespace === '' || this.featureFlagService.managedNamespaceRoot) {
-      let i = state.indexOf(',ns=');
+      const i = state.indexOf(',ns=');
       if (i >= 0) {
         // ",ns=" is 4 characters
         namespace = state.substring(i + 4);
@@ -149,7 +154,7 @@ export default Component.extend({
     if (!path || !state || !code) {
       return this.cancelLogin(oidcWindow, ERROR_MISSING_PARAMS);
     }
-    let adapter = this.store.adapterFor('auth-method');
+    const adapter = this.store.adapterFor('auth-method');
     this.onNamespace(namespace);
     let resp;
     // do the OIDC exchange, set the token on the parent component
@@ -171,6 +176,14 @@ export default Component.extend({
       if (e && e.preventDefault) {
         e.preventDefault();
       }
+      try {
+        await this.fetchRole.perform(this.roleName, { debounce: false });
+      } catch (error) {
+        // this task could be cancelled if the instances in didReceiveAttrs resolve after this was started
+        if (error?.name !== 'TaskCancelation') {
+          throw error;
+        }
+      }
       if (!this.isOIDC || !this.role || !this.role.authUrl) {
         let message = this.errorMessage;
         if (!this.role) {
@@ -182,21 +195,13 @@ export default Component.extend({
         this.onError(message);
         return;
       }
-      try {
-        await this.fetchRole.perform(this.roleName, { debounce: false });
-      } catch (error) {
-        // this task could be cancelled if the instances in didReceiveAttrs resolve after this was started
-        if (error?.name !== 'TaskCancelation') {
-          throw error;
-        }
-      }
-      let win = this.getWindow();
+      const win = this.getWindow();
 
       const POPUP_WIDTH = 500;
       const POPUP_HEIGHT = 600;
-      let left = win.screen.width / 2 - POPUP_WIDTH / 2;
-      let top = win.screen.height / 2 - POPUP_HEIGHT / 2;
-      let oidcWindow = win.open(
+      const left = win.screen.width / 2 - POPUP_WIDTH / 2;
+      const top = win.screen.height / 2 - POPUP_HEIGHT / 2;
+      const oidcWindow = win.open(
         this.role.authUrl,
         'vaultOIDCWindow',
         `width=${POPUP_WIDTH},height=${POPUP_HEIGHT},resizable,scrollbars=yes,top=${top},left=${left}`

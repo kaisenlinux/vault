@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package ldap
 
 import (
@@ -1239,6 +1242,7 @@ func TestLdapAuthBackend_ConfigUpgrade(t *testing.T) {
 			RequestTimeout:           cfg.RequestTimeout,
 			ConnectionTimeout:        cfg.ConnectionTimeout,
 			UsernameAsAlias:          false,
+			DerefAliases:             "never",
 			MaximumPageSize:          1000,
 		},
 	}

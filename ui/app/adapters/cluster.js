@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import AdapterError from '@ember-data/adapter/error';
 import { inject as service } from '@ember/service';
 import { assign } from '@ember/polyfills';
@@ -38,7 +43,7 @@ export default ApplicationAdapter.extend({
   },
 
   findRecord(store, type, id, snapshot) {
-    let fetches = {
+    const fetches = {
       health: this.health(),
       sealStatus: this.sealStatus().catch((e) => e),
     };
@@ -110,7 +115,7 @@ export default ApplicationAdapter.extend({
     const { role, jwt, token, password, username, path, nonce } = data;
     const url = this.urlForAuth(backend, username, path);
     const verb = backend === 'token' ? 'GET' : 'POST';
-    let options = {
+    const options = {
       unauthenticated: true,
     };
     if (backend === 'token') {

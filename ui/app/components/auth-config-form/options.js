@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import AdapterError from '@ember-data/adapter/error';
 import AuthConfigComponent from './config';
 import { inject as service } from '@ember/service';
@@ -18,13 +23,15 @@ import { waitFor } from '@ember/test-waiters';
  */
 
 export default AuthConfigComponent.extend({
+  flashMessages: service(),
   router: service(),
+
   saveModel: task(
     waitFor(function* () {
-      let data = this.model.config.serialize();
+      const data = this.model.config.serialize();
       data.description = this.model.description;
 
-      // token_type should not be tuneable for the token auth method, default is 'default-service'
+      // token_type should not be tuneable for the token auth method.
       if (this.model.type === 'token') {
         delete data.token_type;
       }

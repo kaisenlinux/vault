@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package pki
 
 import (
@@ -12,12 +15,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	vaulthttp "github.com/hashicorp/vault/http"
-	"github.com/hashicorp/vault/vault"
-
+	"github.com/hashicorp/vault/sdk/helper/testhelpers/schema"
 	"github.com/hashicorp/vault/sdk/logical"
+	"github.com/hashicorp/vault/vault"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ocsp"
 )
@@ -43,8 +46,8 @@ func TestOcsp_Disabled(t *testing.T) {
 			resp, err := CBWrite(b, s, "config/crl", map[string]interface{}{
 				"ocsp_disable": "true",
 			})
-			requireSuccessNilResponse(t, resp, err)
-			resp, err = sendOcspRequest(t, b, s, localTT.reqType, testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+			requireSuccessNonNilResponse(t, resp, err)
+			resp, err = SendOcspRequest(t, b, s, localTT.reqType, testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 			require.NoError(t, err)
 			requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 			require.Equal(t, 401, resp.Data["http_status_code"])
@@ -64,9 +67,9 @@ func TestOcsp_UnknownIssuerWithNoDefault(t *testing.T) {
 
 	_, _, testEnv := setupOcspEnv(t, "ec")
 	// Create another completely empty mount so the created issuer/certificate above is unknown
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
-	resp, err := sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err := SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	require.NoError(t, err)
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 401, resp.Data["http_status_code"])
@@ -88,7 +91,7 @@ func TestOcsp_WrongIssuerInRequest(t *testing.T) {
 	})
 	requireSuccessNonNilResponse(t, resp, err, "revoke")
 
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer2, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer2, crypto.SHA1)
 	require.NoError(t, err)
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -170,7 +173,7 @@ func TestOcsp_InvalidIssuerIdInRevocationEntry(t *testing.T) {
 	require.NoError(t, err, "failed writing out new revocation entry: %v", revEntry)
 
 	// Send the request
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	require.NoError(t, err)
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -197,6 +200,7 @@ func TestOcsp_UnknownIssuerIdWithDefaultHavingOcspUsageRemoved(t *testing.T) {
 	resp, err := CBWrite(b, s, "revoke", map[string]interface{}{
 		"serial_number": serial,
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("revoke"), logical.UpdateOperation), resp, true)
 	requireSuccessNonNilResponse(t, resp, err, "revoke")
 
 	// Twiddle the entry so that the issuer id is no longer valid.
@@ -223,7 +227,7 @@ func TestOcsp_UnknownIssuerIdWithDefaultHavingOcspUsageRemoved(t *testing.T) {
 	requireSuccessNonNilResponse(t, resp, err, "failed resetting usage flags on issuer2")
 
 	// Send the request
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	require.NoError(t, err)
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 401, resp.Data["http_status_code"])
@@ -260,7 +264,7 @@ func TestOcsp_RevokedCertHasIssuerWithoutOcspUsage(t *testing.T) {
 	require.False(t, usages.HasUsage(OCSPSigningUsage))
 
 	// Request an OCSP request from it, we should get an Unauthorized response back
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 401, resp.Data["http_status_code"])
@@ -299,7 +303,7 @@ func TestOcsp_RevokedCertHasIssuerWithoutAKey(t *testing.T) {
 	requireSuccessNonNilResponse(t, resp, err, "failed deleting key")
 
 	// Request an OCSP request from it, we should get an Unauthorized response back
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 401, resp.Data["http_status_code"])
@@ -345,7 +349,7 @@ func TestOcsp_MultipleMatchingIssuersOneWithoutSigningUsage(t *testing.T) {
 	require.False(t, usages.HasUsage(OCSPSigningUsage))
 
 	// Request an OCSP request from it, we should get a Good response back, from the rotated cert
-	resp, err = sendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
+	resp, err = SendOcspRequest(t, b, s, "get", testEnv.leafCertIssuer1, testEnv.issuer1, crypto.SHA1)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -439,6 +443,11 @@ func TestOcsp_HigherLevel(t *testing.T) {
 
 	// Test OCSP Get request for ocsp
 	urlEncoded := base64.StdEncoding.EncodeToString(ocspReq)
+	if strings.Contains(urlEncoded, "//") {
+		// workaround known redirect bug that is difficult to fix
+		t.Skipf("VAULT-13630 - Skipping GET OCSP test with encoded issuer cert containing // triggering redirection bug")
+	}
+
 	ocspGetReq := client.NewRequest(http.MethodGet, "/v1/pki/ocsp/"+urlEncoded)
 	ocspGetReq.Headers.Set("Content-Type", "application/ocsp-request")
 	rawResp, err = client.RawRequest(ocspGetReq)
@@ -506,7 +515,7 @@ func runOcspRequestTest(t *testing.T, requestType string, caKeyType string, caKe
 	b, s, testEnv := setupOcspEnvWithCaKeyConfig(t, caKeyType, caKeyBits, caKeySigBits)
 
 	// Non-revoked cert
-	resp, err := sendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer1, testEnv.issuer1, requestHash)
+	resp, err := SendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer1, testEnv.issuer1, requestHash)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -530,7 +539,7 @@ func runOcspRequestTest(t *testing.T, requestType string, caKeyType string, caKe
 	})
 	requireSuccessNonNilResponse(t, resp, err, "revoke")
 
-	resp, err = sendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer1, testEnv.issuer1, requestHash)
+	resp, err = SendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer1, testEnv.issuer1, requestHash)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request with revoked")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -549,7 +558,7 @@ func runOcspRequestTest(t *testing.T, requestType string, caKeyType string, caKe
 	requireOcspResponseSignedBy(t, ocspResp, testEnv.issuer1)
 
 	// Request status for our second issuer
-	resp, err = sendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer2, testEnv.issuer2, requestHash)
+	resp, err = SendOcspRequest(t, b, s, requestType, testEnv.leafCertIssuer2, testEnv.issuer2, requestHash)
 	requireSuccessNonNilResponse(t, resp, err, "ocsp get request")
 	requireFieldsSetInResp(t, resp, "http_content_type", "http_status_code", "http_raw_body")
 	require.Equal(t, 200, resp.Data["http_status_code"])
@@ -570,7 +579,7 @@ func runOcspRequestTest(t *testing.T, requestType string, caKeyType string, caKe
 	require.True(t, thisUpdate.Before(nextUpdate),
 		fmt.Sprintf("thisUpdate %s, should have been before nextUpdate: %s", thisUpdate, nextUpdate))
 	nextUpdateDiff := nextUpdate.Sub(thisUpdate)
-	expectedDiff, err := time.ParseDuration(defaultCrlConfig.OcspExpiry)
+	expectedDiff, err := parseutil.ParseDurationSecond(defaultCrlConfig.OcspExpiry)
 	require.NoError(t, err, "failed to parse default ocsp expiry value")
 	require.Equal(t, expectedDiff, nextUpdateDiff,
 		fmt.Sprintf("the delta between thisUpdate %s and nextUpdate: %s should have been around: %s but was %s",
@@ -581,6 +590,8 @@ func runOcspRequestTest(t *testing.T, requestType string, caKeyType string, caKe
 }
 
 func requireOcspSignatureAlgoForKey(t *testing.T, expected x509.SignatureAlgorithm, actual x509.SignatureAlgorithm) {
+	t.Helper()
+
 	require.Equal(t, expected.String(), actual.String())
 }
 
@@ -603,7 +614,7 @@ func setupOcspEnv(t *testing.T, keyType string) (*backend, logical.Storage, *ocs
 }
 
 func setupOcspEnvWithCaKeyConfig(t *testing.T, keyType string, caKeyBits int, caKeySigBits int) (*backend, logical.Storage, *ocspTestEnv) {
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 	var issuerCerts []*x509.Certificate
 	var leafCerts []*x509.Certificate
 	var issuerIds []issuerID
@@ -631,7 +642,7 @@ func setupOcspEnvWithCaKeyConfig(t *testing.T, keyType string, caKeyBits int, ca
 			"issuer_ref":         issuerId,
 			"key_type":           keyType,
 		})
-		requireSuccessNilResponse(t, resp, err, "roles/test"+strconv.FormatInt(int64(i), 10))
+		requireSuccessNonNilResponse(t, resp, err, "roles/test"+strconv.FormatInt(int64(i), 10))
 
 		resp, err = CBWrite(b, s, "issue/test"+strconv.FormatInt(int64(i), 10), map[string]interface{}{
 			"common_name": "test.foobar.com",
@@ -662,7 +673,9 @@ func setupOcspEnvWithCaKeyConfig(t *testing.T, keyType string, caKeyBits int, ca
 	return b, s, testEnv
 }
 
-func sendOcspRequest(t *testing.T, b *backend, s logical.Storage, getOrPost string, cert, issuer *x509.Certificate, requestHash crypto.Hash) (*logical.Response, error) {
+func SendOcspRequest(t *testing.T, b *backend, s logical.Storage, getOrPost string, cert, issuer *x509.Certificate, requestHash crypto.Hash) (*logical.Response, error) {
+	t.Helper()
+
 	ocspRequest := generateRequest(t, requestHash, cert, issuer)
 
 	switch strings.ToLower(getOrPost) {
@@ -671,7 +684,7 @@ func sendOcspRequest(t *testing.T, b *backend, s logical.Storage, getOrPost stri
 	case "post":
 		return sendOcspPostRequest(b, s, ocspRequest)
 	default:
-		t.Fatalf("unsupported value for sendOcspRequest getOrPost arg: %s", getOrPost)
+		t.Fatalf("unsupported value for SendOcspRequest getOrPost arg: %s", getOrPost)
 	}
 	return nil, nil
 }
@@ -694,16 +707,4 @@ func sendOcspPostRequest(b *backend, s logical.Storage, ocspRequest []byte) (*lo
 	})
 
 	return resp, err
-}
-
-func generateRequest(t *testing.T, requestHash crypto.Hash, cert *x509.Certificate, issuer *x509.Certificate) []byte {
-	opts := &ocsp.RequestOptions{Hash: requestHash}
-	ocspRequestDer, err := ocsp.CreateRequest(cert, issuer, opts)
-	require.NoError(t, err, "Failed generating OCSP request")
-	return ocspRequestDer
-}
-
-func requireOcspResponseSignedBy(t *testing.T, ocspResp *ocsp.Response, issuer *x509.Certificate) {
-	err := ocspResp.CheckSignatureFrom(issuer)
-	require.NoError(t, err, "Failed signature verification of ocsp response: %w", err)
 }

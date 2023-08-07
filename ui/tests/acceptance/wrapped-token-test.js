@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { settled, currentURL, visit } from '@ember/test-helpers';
@@ -21,7 +26,7 @@ const setupWrapping = async () => {
   await settled();
   await auth.tokenInput('root').submit();
   await settled();
-  let token = await wrappedAuth();
+  const token = await wrappedAuth();
   await auth.logout();
   await settled();
   return token;
@@ -31,17 +36,17 @@ module('Acceptance | wrapped_token query param functionality', function (hooks) 
   setupMirage(hooks);
 
   test('it authenticates you if the query param is present', async function (assert) {
-    let token = await setupWrapping();
+    const token = await setupWrapping();
     await auth.visit({ wrapped_token: token });
     await settled();
-    assert.equal(currentURL(), '/vault/secrets', 'authenticates and redirects to home');
+    assert.strictEqual(currentURL(), '/vault/secrets', 'authenticates and redirects to home');
   });
 
   test('it authenticates when used with the with=token query param', async function (assert) {
-    let token = await setupWrapping();
+    const token = await setupWrapping();
     await auth.visit({ wrapped_token: token, with: 'token' });
     await settled();
-    assert.equal(currentURL(), '/vault/secrets', 'authenticates and redirects to home');
+    assert.strictEqual(currentURL(), '/vault/secrets', 'authenticates and redirects to home');
   });
 
   test('it should authenticate when hitting logout url with wrapped_token when logged out', async function (assert) {

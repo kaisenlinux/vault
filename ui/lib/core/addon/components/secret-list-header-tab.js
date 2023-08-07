@@ -1,4 +1,9 @@
 /**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
+/**
  * @module SecretListHeaderTab
  * SecretListHeaderTab component passes in properties that are used to check capabilities and either display or not display the component.
  * Use case was first for the Database Secret Engine, but should be used in future iterations as we don't generally want to show things the user does not
@@ -38,9 +43,9 @@ export default class SecretListHeaderTab extends Component {
   }
 
   async fetchCapabilities() {
-    let capabilitiesArray = ['canList', 'canCreate', 'canUpdate'];
-    let checkCapabilities = function (object) {
-      let array = [];
+    const capabilitiesArray = ['canList', 'canCreate', 'canUpdate'];
+    const checkCapabilities = function (object) {
+      const array = [];
       // we only want to look at the canList, canCreate and canUpdate on the capabilities record
       capabilitiesArray.forEach((item) => {
         // object is sometimes null
@@ -50,19 +55,19 @@ export default class SecretListHeaderTab extends Component {
       });
       return array;
     };
-    let checker = (arr) => arr.every((item) => !item); // same things as listing every item as !item && !item, etc.
+    const checker = (arr) => arr.every((item) => !item); // same things as listing every item as !item && !item, etc.
     // For now only check capabilities for the Database Secrets Engine
     if (this.args.displayName === 'Database') {
-      let peekRecordRoles = this.store.peekRecord('capabilities', 'database/roles/');
-      let peekRecordStaticRoles = this.store.peekRecord('capabilities', 'database/static-roles/');
-      let peekRecordConnections = this.store.peekRecord('capabilities', 'database/config/');
+      const peekRecordRoles = this.store.peekRecord('capabilities', 'database/roles/');
+      const peekRecordStaticRoles = this.store.peekRecord('capabilities', 'database/static-roles/');
+      const peekRecordConnections = this.store.peekRecord('capabilities', 'database/config/');
       // peekRecord if the capabilities store data is there for the connections (config) and roles model
       if (
         (peekRecordRoles && this.args.path === 'roles') ||
         (peekRecordStaticRoles && this.args.path === 'roles')
       ) {
-        let roles = checker(checkCapabilities(peekRecordRoles));
-        let staticRoles = checker(checkCapabilities(peekRecordStaticRoles));
+        const roles = checker(checkCapabilities(peekRecordRoles));
+        const staticRoles = checker(checkCapabilities(peekRecordStaticRoles));
 
         this.dontShowTab = roles && staticRoles;
         return;
@@ -72,7 +77,7 @@ export default class SecretListHeaderTab extends Component {
         return;
       }
       // otherwise queryRecord and create an instance on the capabilities.
-      let response = await this.store.queryRecord(
+      const response = await this.store.queryRecord(
         'capabilities',
         this.pathQuery(this.args.id, this.args.path)
       );

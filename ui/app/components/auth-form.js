@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import Ember from 'ember';
 import { next } from '@ember/runloop';
 import { inject as service } from '@ember/service';
@@ -60,7 +65,7 @@ export default Component.extend(DEFAULTS, {
 
   didReceiveAttrs() {
     this._super(...arguments);
-    let {
+    const {
       wrappedToken: token,
       oldWrappedToken: oldToken,
       oldNamespace: oldNS,
@@ -95,13 +100,13 @@ export default Component.extend(DEFAULTS, {
   didRender() {
     this._super(...arguments);
     // on very narrow viewports the active tab may be overflowed, so we scroll it into view here
-    let activeEle = this.element.querySelector('li.is-active');
+    const activeEle = this.element.querySelector('li.is-active');
     if (activeEle) {
       activeEle.scrollIntoView();
     }
 
     next(() => {
-      let firstMethod = this.firstMethod();
+      const firstMethod = this.firstMethod();
       // set `with` to the first method
       if (
         !this.wrappedToken &&
@@ -114,7 +119,7 @@ export default Component.extend(DEFAULTS, {
   },
 
   firstMethod() {
-    let firstMethod = this.methodsToShow.firstObject;
+    const firstMethod = this.methodsToShow.firstObject;
     if (!firstMethod) return;
     // prefer backends with a path over those with a type
     return firstMethod.path || firstMethod.type;
@@ -155,7 +160,7 @@ export default Component.extend(DEFAULTS, {
     }
     let type = this.selectedAuthBackend.type || 'token';
     type = type.toLowerCase();
-    let templateName = dasherize(type);
+    const templateName = dasherize(type);
     return templateName;
   }),
 
@@ -164,8 +169,8 @@ export default Component.extend(DEFAULTS, {
   cspErrorText: `This is a standby Vault node but can't communicate with the active node via request forwarding. Sign in at the active node to use the Vault UI.`,
 
   allSupportedMethods: computed('methodsToShow', 'hasMethodsWithPath', function () {
-    let hasMethodsWithPath = this.hasMethodsWithPath;
-    let methodsToShow = this.methodsToShow;
+    const hasMethodsWithPath = this.hasMethodsWithPath;
+    const methodsToShow = this.methodsToShow;
     return hasMethodsWithPath ? methodsToShow.concat(BACKENDS) : methodsToShow;
   }),
 
@@ -173,8 +178,8 @@ export default Component.extend(DEFAULTS, {
     return this.methodsToShow.isAny('path');
   }),
   methodsToShow: computed('methods', function () {
-    let methods = this.methods || [];
-    let shownMethods = methods.filter((m) =>
+    const methods = this.methods || [];
+    const shownMethods = methods.filter((m) =>
       BACKENDS.find((b) => b.type.toLowerCase() === m.type.toLowerCase())
     );
     return shownMethods.length ? shownMethods : BACKENDS;
@@ -184,9 +189,9 @@ export default Component.extend(DEFAULTS, {
     waitFor(function* (token) {
       // will be using the Token Auth Method, so set it here
       this.set('selectedAuth', 'token');
-      let adapter = this.store.adapterFor('tools');
+      const adapter = this.store.adapterFor('tools');
       try {
-        let response = yield adapter.toolAction('unwrap', null, { clientToken: token });
+        const response = yield adapter.toolAction('unwrap', null, { clientToken: token });
         this.set('token', response.auth.client_token);
         this.send('doSubmit');
       } catch (e) {
@@ -197,9 +202,9 @@ export default Component.extend(DEFAULTS, {
 
   fetchMethods: task(
     waitFor(function* () {
-      let store = this.store;
+      const store = this.store;
       try {
-        let methods = yield store.findAll('auth-method', {
+        const methods = yield store.findAll('auth-method', {
           adapterOptions: {
             unauthenticated: true,
           },
@@ -277,7 +282,6 @@ export default Component.extend(DEFAULTS, {
 
   delayAuthMessageReminder: task(function* () {
     if (Ember.testing) {
-      this.showLoading = true;
       yield timeout(0);
     } else {
       yield timeout(5000);

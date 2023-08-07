@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import { or } from '@ember/object/computed';
 import { isBlank } from '@ember/utils';
@@ -29,7 +34,7 @@ export default Component.extend(FocusOnInsertMixin, {
 
   waitForKeyUp: task(function* () {
     while (true) {
-      let event = yield waitForEvent(document.body, 'keyup');
+      const event = yield waitForEvent(document.body, 'keyup');
       this.onEscape(event);
     }
   })

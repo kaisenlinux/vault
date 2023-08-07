@@ -1,8 +1,8 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.12.6.orig/scripts/build.sh
-+++ vault-1.12.6/scripts/build.sh
-@@ -18,8 +18,8 @@ cd "$DIR"
+--- vault-1.14.1.orig/scripts/build.sh
++++ vault-1.14.1/scripts/build.sh
+@@ -21,8 +21,8 @@ cd "$DIR"
  BUILD_TAGS="${BUILD_TAGS:-"vault"}"
  
  # Get the git commit
@@ -13,18 +13,18 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
  
  BUILD_DATE="$("$SOURCE_DIR"/ci-helper.sh date)"
  
-@@ -40,7 +40,7 @@ mkdir -p bin/
+@@ -43,7 +43,7 @@ mkdir -p bin/
  echo "==> Building..."
  ${GO_CMD} build \
      -gcflags "${GCFLAGS}" \
--    -ldflags "${LD_FLAGS} -X github.com/hashicorp/vault/sdk/version.GitCommit='${GIT_COMMIT}${GIT_DIRTY}' -X github.com/hashicorp/vault/sdk/version.BuildDate=${BUILD_DATE}" \
-+    -ldflags "${LD_FLAGS} -X github.com/hashicorp/vault/sdk/version.BuildDate=${BUILD_DATE}" \
+-    -ldflags "${LD_FLAGS} -X github.com/hashicorp/vault/version.GitCommit='${GIT_COMMIT}${GIT_DIRTY}' -X github.com/hashicorp/vault/version.BuildDate=${BUILD_DATE}" \
++    -ldflags "${LD_FLAGS} -X github.com/hashicorp/vault/version.BuildDate=${BUILD_DATE}" \
      -o "bin/vault" \
      -tags "${BUILD_TAGS}" \
      .
---- vault-1.12.6.orig/scripts/ci-helper.sh
-+++ vault-1.12.6/scripts/ci-helper.sh
-@@ -93,7 +93,7 @@ function version_package() {
+--- vault-1.14.1.orig/scripts/ci-helper.sh
++++ vault-1.14.1/scripts/ci-helper.sh
+@@ -96,7 +96,7 @@ function version_package() {
  function build_date() {
    # It's tricky to do an RFC3339 format in a cross platform way, so we hardcode UTC
    : "${DATE_FORMAT:="%Y-%m-%dT%H:%M:%SZ"}"

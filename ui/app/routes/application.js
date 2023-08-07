@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import Route from '@ember/routing/route';
 import ControlGroupError from 'vault/lib/control-group-error';
@@ -13,18 +18,18 @@ export default Route.extend({
       window.scrollTo(0, 0);
     },
     error(error, transition) {
-      let controlGroup = this.controlGroup;
+      const controlGroup = this.controlGroup;
       if (error instanceof ControlGroupError) {
-        return controlGroup.handleError(error, transition);
+        return controlGroup.handleError(error);
       }
       if (error.path === '/v1/sys/wrapping/unwrap') {
         controlGroup.unmarkTokenForUnwrap();
       }
 
-      let router = this.routing;
+      const router = this.routing;
       //FIXME transition.intent likely needs to be replaced
       let errorURL = transition.intent.url;
-      let { name, contexts, queryParams } = transition.intent;
+      const { name, contexts, queryParams } = transition.intent;
 
       // If the transition is internal to Ember, we need to generate the URL
       // from the route parameters ourselves

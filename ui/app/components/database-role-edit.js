@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import Component from '@glimmer/component';
 import { inject as service } from '@ember/service';
 import { action } from '@ember/object';
@@ -21,7 +26,7 @@ export default class DatabaseRoleEdit extends Component {
   @tracked loading = false;
 
   get warningMessages() {
-    let warnings = {};
+    const warnings = {};
     if (this.args.model.canUpdateDb === false) {
       warnings.database = `You don’t have permissions to update this database connection, so this role cannot be created.`;
     }
@@ -63,7 +68,7 @@ export default class DatabaseRoleEdit extends Component {
         try {
           this.router.transitionTo(LIST_ROOT_ROUTE, backend, { queryParams: { tab: 'role' } });
         } catch (e) {
-          console.debug(e);
+          console.debug(e); // eslint-disable-line
         }
       })
       .catch((e) => {
@@ -77,11 +82,11 @@ export default class DatabaseRoleEdit extends Component {
     this.loading = true;
 
     const mode = this.args.mode;
-    let roleSecret = this.args.model;
-    let secretId = roleSecret.name;
+    const roleSecret = this.args.model;
+    const secretId = roleSecret.name;
     if (mode === 'create') {
       roleSecret.set('id', secretId);
-      let path = roleSecret.type === 'static' ? 'static-roles' : 'roles';
+      const path = roleSecret.type === 'static' ? 'static-roles' : 'roles';
       roleSecret.set('path', path);
     }
     roleSecret
@@ -90,7 +95,7 @@ export default class DatabaseRoleEdit extends Component {
         try {
           this.router.transitionTo(SHOW_ROUTE, `role/${secretId}`);
         } catch (e) {
-          console.debug(e);
+          console.debug(e); // eslint-disable-line
         }
       })
       .catch((e) => {
@@ -104,7 +109,7 @@ export default class DatabaseRoleEdit extends Component {
   @action
   rotateRoleCred(id) {
     const backend = this.args.model?.backend;
-    let adapter = this.store.adapterFor('database/credential');
+    const adapter = this.store.adapterFor('database/credential');
     adapter
       .rotateRoleCredentials(backend, id)
       .then(() => {

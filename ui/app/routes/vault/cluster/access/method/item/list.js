@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import Route from '@ember/routing/route';
 import { singularize } from 'ember-inflector';
@@ -18,7 +23,7 @@ export default Route.extend(ListRoute, {
   model() {
     const { type, authMethodPath, itemType } = this.getMethodAndModelInfo();
     const { page, pageFilter } = this.paramsFor(this.routeName);
-    let modelType = `generated-${singularize(itemType)}-${type}`;
+    const modelType = `generated-${singularize(itemType)}-${type}`;
 
     return this.store
       .lazyPaginatedQuery(modelType, {
@@ -36,6 +41,7 @@ export default Route.extend(ListRoute, {
         }
       });
   },
+
   actions: {
     willTransition(transition) {
       window.scrollTo(0, 0);
@@ -49,6 +55,7 @@ export default Route.extend(ListRoute, {
       this.refresh();
     },
   },
+
   setupController(controller) {
     this._super(...arguments);
     const { apiPath, authMethodPath, itemType, methodModel } = this.getMethodAndModelInfo();

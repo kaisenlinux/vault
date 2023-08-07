@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package pki
 
 import (
@@ -97,21 +100,21 @@ func (sc *storageContext) changeDefaultIssuerTimestamps(oldDefault issuerID, new
 		issuer.LastModified = now
 		err = sc.writeIssuer(issuer)
 		if err != nil {
-			return fmt.Errorf("unable to update issuer (%v)'s modification time: error persisting issuer: %v", thisId, err)
+			return fmt.Errorf("unable to update issuer (%v)'s modification time: error persisting issuer: %w", thisId, err)
 		}
 	}
 
-	// Fetch and update the localCRLConfigEntry (3&4).
+	// Fetch and update the internalCRLConfigEntry (3&4).
 	cfg, err := sc.getLocalCRLConfig()
 	if err != nil {
-		return fmt.Errorf("unable to update local CRL config's modification time: error fetching local CRL config: %v", err)
+		return fmt.Errorf("unable to update local CRL config's modification time: error fetching local CRL config: %w", err)
 	}
 
 	cfg.LastModified = now
 	cfg.DeltaLastModified = now
 	err = sc.setLocalCRLConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("unable to update local CRL config's modification time: error persisting local CRL config: %v", err)
+		return fmt.Errorf("unable to update local CRL config's modification time: error persisting local CRL config: %w", err)
 	}
 
 	return nil

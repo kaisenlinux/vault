@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package consul
 
 import (
@@ -8,7 +11,7 @@ import (
 
 	consulapi "github.com/hashicorp/consul/api"
 	goversion "github.com/hashicorp/go-version"
-	"github.com/hashicorp/vault/helper/testhelpers/docker"
+	"github.com/hashicorp/vault/sdk/helper/docker"
 )
 
 type Config struct {
@@ -58,7 +61,7 @@ func PrepareTestContainer(t *testing.T, version string, isEnterprise bool, doBoo
 	if isEnterprise {
 		version += "-ent"
 		name = "consul-enterprise"
-		repo = "hashicorp/consul-enterprise"
+		repo = "docker.mirror.hashicorp.services/hashicorp/consul-enterprise"
 		license, hasLicense := os.LookupEnv("CONSUL_LICENSE")
 		envVars = append(envVars, "CONSUL_LICENSE="+license)
 

@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import Route from '@ember/routing/route';
 
@@ -6,7 +11,7 @@ export default Route.extend({
   async model() {
     const backend = this.modelFor('vault.cluster.secrets.backend');
     if (backend.isV2KV) {
-      let canRead = await this.store
+      const canRead = await this.store
         .findRecord('capabilities', `${backend.id}/config`)
         .then((response) => response.canRead);
       // only set these config params if they can read the config endpoint.

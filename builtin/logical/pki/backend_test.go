@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package pki
 
 import (
@@ -27,9 +30,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/vault/helper/testhelpers/teststorage"
+
+	"github.com/hashicorp/vault/helper/testhelpers"
+
+	"github.com/hashicorp/vault/sdk/helper/testhelpers/schema"
 
 	"github.com/stretchr/testify/require"
 
@@ -104,7 +112,7 @@ OzQeADTSCn5VidOfjDkIst9UXjMlrFfV9/oJEw5Eiqa6lkNPCGDhfA8=
 
 func TestPKI_RequireCN(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
 		"common_name": "myvault.com",
@@ -129,9 +137,10 @@ func TestPKI_RequireCN(t *testing.T) {
 
 	// Issue a cert with require_cn set to true and with common name supplied.
 	// It should succeed.
-	_, err = CBWrite(b, s, "issue/example", map[string]interface{}{
+	resp, err = CBWrite(b, s, "issue/example", map[string]interface{}{
 		"common_name": "foobar.com",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("issue/example"), logical.UpdateOperation), resp, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +189,7 @@ func TestPKI_RequireCN(t *testing.T) {
 
 func TestPKI_DeviceCert(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
 		"common_name":         "myvault.com",
@@ -249,7 +258,7 @@ func TestPKI_DeviceCert(t *testing.T) {
 
 func TestBackend_InvalidParameter(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	_, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
 		"common_name": "myvault.com",
@@ -272,7 +281,7 @@ func TestBackend_InvalidParameter(t *testing.T) {
 func TestBackend_CSRValues(t *testing.T) {
 	t.Parallel()
 	initTest.Do(setCerts)
-	b, _ := createBackendWithStorage(t)
+	b, _ := CreateBackendWithStorage(t)
 
 	testCase := logicaltest.TestCase{
 		LogicalBackend: b,
@@ -289,7 +298,7 @@ func TestBackend_CSRValues(t *testing.T) {
 func TestBackend_URLsCRUD(t *testing.T) {
 	t.Parallel()
 	initTest.Do(setCerts)
-	b, _ := createBackendWithStorage(t)
+	b, _ := CreateBackendWithStorage(t)
 
 	testCase := logicaltest.TestCase{
 		LogicalBackend: b,
@@ -325,7 +334,7 @@ func TestBackend_Roles(t *testing.T) {
 
 		t.Run(tc.name, func(t *testing.T) {
 			initTest.Do(setCerts)
-			b, _ := createBackendWithStorage(t)
+			b, _ := CreateBackendWithStorage(t)
 
 			testCase := logicaltest.TestCase{
 				LogicalBackend: b,
@@ -466,8 +475,13 @@ func checkCertsAndPrivateKey(keyType string, key crypto.Signer, usage x509.KeyUs
 		}
 	}
 
-	if math.Abs(float64(time.Now().Add(validity).Unix()-cert.NotAfter.Unix())) > 20 {
-		return nil, fmt.Errorf("certificate validity end: %s; expected within 20 seconds of %s", cert.NotAfter.Format(time.RFC3339), time.Now().Add(validity).Format(time.RFC3339))
+	// TODO: We incremented 20->25 due to CircleCI execution
+	// being slow and pausing this test. We might consider recording the
+	// actual issuance time of the cert and calculating the expected
+	// validity period +/- fuzz, but that'd require recording and passing
+	// through more information.
+	if math.Abs(float64(time.Now().Add(validity).Unix()-cert.NotAfter.Unix())) > 25 {
+		return nil, fmt.Errorf("certificate validity end: %s; expected within 25 seconds of %s", cert.NotAfter.Format(time.RFC3339), time.Now().Add(validity).Format(time.RFC3339))
 	}
 
 	return parsedCertBundle, nil
@@ -546,7 +560,6 @@ func generateURLSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 				if err != nil {
 					return err
 				}
-
 				if !reflect.DeepEqual(entries, expected) {
 					return fmt.Errorf("expected urls\n%#v\ndoes not match provided\n%#v\n", expected, entries)
 				}
@@ -599,7 +612,7 @@ func generateURLSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 				certBytes, _ := base64.StdEncoding.DecodeString(certString)
 				certs, err := x509.ParseCertificates(certBytes)
 				if err != nil {
-					return fmt.Errorf("returned cert cannot be parsed: %v", err)
+					return fmt.Errorf("returned cert cannot be parsed: %w", err)
 				}
 				if len(certs) != 1 {
 					return fmt.Errorf("unexpected returned length of certificates: %d", len(certs))
@@ -652,7 +665,7 @@ func generateURLSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 				certBytes, _ := base64.StdEncoding.DecodeString(certString)
 				certs, err := x509.ParseCertificates(certBytes)
 				if err != nil {
-					return fmt.Errorf("returned cert cannot be parsed: %v", err)
+					return fmt.Errorf("returned cert cannot be parsed: %w", err)
 				}
 				if len(certs) != 1 {
 					return fmt.Errorf("unexpected returned length of certificates: %d", len(certs))
@@ -678,6 +691,8 @@ func generateURLSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 }
 
 func generateCSR(t *testing.T, csrTemplate *x509.CertificateRequest, keyType string, keyBits int) (interface{}, []byte, string) {
+	t.Helper()
+
 	var priv interface{}
 	var err error
 	switch keyType {
@@ -773,7 +788,7 @@ func generateCSRSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 				certBytes, _ := base64.StdEncoding.DecodeString(certString)
 				certs, err := x509.ParseCertificates(certBytes)
 				if err != nil {
-					return fmt.Errorf("returned cert cannot be parsed: %v", err)
+					return fmt.Errorf("returned cert cannot be parsed: %w", err)
 				}
 				if len(certs) != 1 {
 					return fmt.Errorf("unexpected returned length of certificates: %d", len(certs))
@@ -809,6 +824,8 @@ func generateCSRSteps(t *testing.T, caCert, caKey string, intdata, reqdata map[s
 }
 
 func generateTestCsr(t *testing.T, keyType certutil.PrivateKeyType, keyBits int) (x509.CertificateRequest, string) {
+	t.Helper()
+
 	csrTemplate := x509.CertificateRequest{
 		Subject: pkix.Name{
 			Country:      []string{"MyCountry"},
@@ -1730,7 +1747,7 @@ func generateRoleSteps(t *testing.T, useCSRs bool) []logicaltest.TestStep {
 
 func TestRolesAltIssuer(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// Create two issuers.
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
@@ -1828,7 +1845,7 @@ func TestRolesAltIssuer(t *testing.T) {
 
 func TestBackend_PathFetchValidRaw(t *testing.T) {
 	t.Parallel()
-	b, storage := createBackendWithStorage(t)
+	b, storage := CreateBackendWithStorage(t)
 
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -1870,6 +1887,7 @@ func TestBackend_PathFetchValidRaw(t *testing.T) {
 		Data:       map[string]interface{}{},
 		MountPoint: "pki/",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("ca/pem"), logical.ReadOperation), resp, true)
 	require.NoError(t, err)
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed read ca/pem, %#v", resp)
@@ -1960,7 +1978,7 @@ func TestBackend_PathFetchValidRaw(t *testing.T) {
 func TestBackend_PathFetchCertList(t *testing.T) {
 	t.Parallel()
 	// create the backend
-	b, storage := createBackendWithStorage(t)
+	b, storage := CreateBackendWithStorage(t)
 
 	// generate root
 	rootData := map[string]interface{}{
@@ -1975,6 +1993,7 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 		Data:       rootData,
 		MountPoint: "pki/",
 	})
+
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to generate root, %#v", resp)
 	}
@@ -1995,6 +2014,16 @@ func TestBackend_PathFetchCertList(t *testing.T) {
 		Data:       urlsData,
 		MountPoint: "pki/",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("config/urls"), logical.UpdateOperation), resp, true)
+
+	resp, err = b.HandleRequest(context.Background(), &logical.Request{
+		Operation:  logical.ReadOperation,
+		Path:       "config/urls",
+		Storage:    storage,
+		MountPoint: "pki/",
+	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("config/urls"), logical.ReadOperation), resp, true)
+
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to config urls, %#v", resp)
 	}
@@ -2104,7 +2133,7 @@ func TestBackend_SignVerbatim(t *testing.T) {
 
 func runTestSignVerbatim(t *testing.T, keyType string) {
 	// create the backend
-	b, storage := createBackendWithStorage(t)
+	b, storage := CreateBackendWithStorage(t)
 
 	// generate root
 	rootData := map[string]interface{}{
@@ -2135,6 +2164,16 @@ func runTestSignVerbatim(t *testing.T, keyType string) {
 		Subject: pkix.Name{
 			CommonName: "foo.bar.com",
 		},
+		// Check that otherName extensions are not duplicated (see hashicorp/vault#16700).
+		// If these extensions are duplicated, sign-verbatim will fail when parsing the signed certificate on Go 1.19+ (see golang/go#50988).
+		// On older versions of Go this test will fail due to an explicit check for duplicate otherNames later in this test.
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:       oidExtensionSubjectAltName,
+				Critical: false,
+				Value:    []byte{0x30, 0x26, 0xA0, 0x24, 0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x14, 0x02, 0x03, 0xA0, 0x16, 0x0C, 0x14, 0x75, 0x73, 0x65, 0x72, 0x6E, 0x61, 0x6D, 0x65, 0x40, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65, 0x2E, 0x63, 0x6F, 0x6D},
+			},
+		},
 	}
 	csr, err := x509.CreateCertificateRequest(rand.Reader, csrReq, key)
 	if err != nil {
@@ -2164,6 +2203,8 @@ func runTestSignVerbatim(t *testing.T, keyType string) {
 		Data:       signVerbatimData,
 		MountPoint: "pki/",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("sign-verbatim"), logical.UpdateOperation), resp, true)
+
 	if resp != nil && resp.IsError() {
 		t.Fatalf("failed to sign-verbatim basic CSR: %#v", *resp)
 	}
@@ -2285,6 +2326,19 @@ func runTestSignVerbatim(t *testing.T, keyType string) {
 		t.Fatalf("expected a single cert, got %d", len(certs))
 	}
 	cert = certs[0]
+
+	// Fallback check for duplicate otherName, necessary on Go versions before 1.19.
+	// We assume that there is only one SAN in the original CSR and that it is an otherName.
+	san_count := 0
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(oidExtensionSubjectAltName) {
+			san_count += 1
+		}
+	}
+	if san_count != 1 {
+		t.Fatalf("expected one SAN extension, got %d", san_count)
+	}
+
 	notAfter := cert.NotAfter.Format(time.RFC3339)
 	if notAfter != "9999-12-31T23:59:59Z" {
 		t.Fatal(fmt.Errorf("not after from certificate is not matching with input parameter"))
@@ -2336,7 +2390,7 @@ func runTestSignVerbatim(t *testing.T, keyType string) {
 
 func TestBackend_Root_Idempotency(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// This is a change within 1.11, we are no longer idempotent across generate/internal calls.
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
@@ -2346,6 +2400,14 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	require.NotNil(t, resp, "expected ca info")
 	keyId1 := resp.Data["key_id"]
 	issuerId1 := resp.Data["issuer_id"]
+	cert := parseCert(t, resp.Data["certificate"].(string))
+	certSkid := certutil.GetHexFormatted(cert.SubjectKeyId, ":")
+
+	//  -> Validate the SKID matches between the root cert and the key
+	resp, err = CBRead(b, s, "key/"+keyId1.(keyID).String())
+	require.NoError(t, err)
+	require.NotNil(t, resp, "expected a response")
+	require.Equal(t, resp.Data["subject_key_id"], certSkid)
 
 	resp, err = CBRead(b, s, "cert/ca_chain")
 	require.NoError(t, err, "error reading ca_chain: %v", err)
@@ -2360,6 +2422,14 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	require.NotNil(t, resp, "expected ca info")
 	keyId2 := resp.Data["key_id"]
 	issuerId2 := resp.Data["issuer_id"]
+	cert = parseCert(t, resp.Data["certificate"].(string))
+	certSkid = certutil.GetHexFormatted(cert.SubjectKeyId, ":")
+
+	//  -> Validate the SKID matches between the root cert and the key
+	resp, err = CBRead(b, s, "key/"+keyId2.(keyID).String())
+	require.NoError(t, err)
+	require.NotNil(t, resp, "expected a response")
+	require.Equal(t, resp.Data["subject_key_id"], certSkid)
 
 	// Make sure that we actually generated different issuer and key values
 	require.NotEqual(t, keyId1, keyId2)
@@ -2368,6 +2438,7 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	// Now because the issued CA's have no links, the call to ca_chain should return the same data (ca chain from default)
 	resp, err = CBRead(b, s, "cert/ca_chain")
 	require.NoError(t, err, "error reading ca_chain: %v", err)
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("cert/ca_chain"), logical.ReadOperation), resp, true)
 
 	r2Data := resp.Data
 	if !reflect.DeepEqual(r1Data, r2Data) {
@@ -2379,15 +2450,31 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	resp, err = CBWrite(b, s, "config/ca", map[string]interface{}{
 		"pem_bundle": pemBundleRootCA,
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("config/ca"), logical.UpdateOperation), resp, true)
+
 	require.NoError(t, err)
 	require.NotNil(t, resp, "expected ca info")
+	firstMapping := resp.Data["mapping"].(map[string]string)
 	firstImportedKeys := resp.Data["imported_keys"].([]string)
 	firstImportedIssuers := resp.Data["imported_issuers"].([]string)
+	firstExistingKeys := resp.Data["existing_keys"].([]string)
+	firstExistingIssuers := resp.Data["existing_issuers"].([]string)
 
 	require.NotContains(t, firstImportedKeys, keyId1)
 	require.NotContains(t, firstImportedKeys, keyId2)
 	require.NotContains(t, firstImportedIssuers, issuerId1)
 	require.NotContains(t, firstImportedIssuers, issuerId2)
+	require.Empty(t, firstExistingKeys)
+	require.Empty(t, firstExistingIssuers)
+	require.NotEmpty(t, firstMapping)
+	require.Equal(t, 1, len(firstMapping))
+
+	var issuerId3 string
+	var keyId3 string
+	for i, k := range firstMapping {
+		issuerId3 = i
+		keyId3 = k
+	}
 
 	// Performing this again should result in no key/issuer ids being imported/generated.
 	resp, err = CBWrite(b, s, "config/ca", map[string]interface{}{
@@ -2395,11 +2482,17 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp, "expected ca info")
+	secondMapping := resp.Data["mapping"].(map[string]string)
 	secondImportedKeys := resp.Data["imported_keys"]
 	secondImportedIssuers := resp.Data["imported_issuers"]
+	secondExistingKeys := resp.Data["existing_keys"]
+	secondExistingIssuers := resp.Data["existing_issuers"]
 
-	require.Nil(t, secondImportedKeys)
-	require.Nil(t, secondImportedIssuers)
+	require.Empty(t, secondImportedKeys)
+	require.Empty(t, secondImportedIssuers)
+	require.Contains(t, secondExistingKeys, keyId3)
+	require.Contains(t, secondExistingIssuers, issuerId3)
+	require.Equal(t, 1, len(secondMapping))
 
 	resp, err = CBDelete(b, s, "root")
 	require.NoError(t, err)
@@ -2439,10 +2532,10 @@ func TestBackend_Root_Idempotency(t *testing.T) {
 	}
 }
 
-func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
+func TestBackend_SignIntermediate_AllowedPastCAValidity(t *testing.T) {
 	t.Parallel()
-	b_root, s_root := createBackendWithStorage(t)
-	b_int, s_int := createBackendWithStorage(t)
+	b_root, s_root := CreateBackendWithStorage(t)
+	b_int, s_int := CreateBackendWithStorage(t)
 	var err error
 
 	// Direct issuing from root
@@ -2457,6 +2550,7 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 	_, err = CBWrite(b_root, s_root, "roles/test", map[string]interface{}{
 		"allow_bare_domains": true,
 		"allow_subdomains":   true,
+		"allow_any_name":     true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2465,20 +2559,26 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 	resp, err := CBWrite(b_int, s_int, "intermediate/generate/internal", map[string]interface{}{
 		"common_name": "myint.com",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b_root.Route("intermediate/generate/internal"), logical.UpdateOperation), resp, true)
+	require.Contains(t, resp.Data, "key_id")
+	intKeyId := resp.Data["key_id"].(keyID)
+	csr := resp.Data["csr"]
+
+	resp, err = CBRead(b_int, s_int, "key/"+intKeyId.String())
+	require.NoError(t, err)
+	require.NotNil(t, resp, "expected a response")
+	intSkid := resp.Data["subject_key_id"].(string)
+
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	csr := resp.Data["csr"]
 
 	_, err = CBWrite(b_root, s_root, "sign/test", map[string]interface{}{
 		"common_name": "myint.com",
 		"csr":         csr,
 		"ttl":         "60h",
 	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	require.ErrorContains(t, err, "that is beyond the expiration of the CA certificate")
 
 	_, err = CBWrite(b_root, s_root, "sign-verbatim/test", map[string]interface{}{
 		"common_name": "myint.com",
@@ -2486,9 +2586,7 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 		"csr":         csr,
 		"ttl":         "60h",
 	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	require.ErrorContains(t, err, "that is beyond the expiration of the CA certificate")
 
 	resp, err = CBWrite(b_root, s_root, "root/sign-intermediate", map[string]interface{}{
 		"common_name": "myint.com",
@@ -2505,12 +2603,16 @@ func TestBackend_SignIntermediate_AllowedPastCA(t *testing.T) {
 	if len(resp.Warnings) == 0 {
 		t.Fatalf("expected warnings, got %#v", *resp)
 	}
+
+	cert := parseCert(t, resp.Data["certificate"].(string))
+	certSkid := certutil.GetHexFormatted(cert.SubjectKeyId, ":")
+	require.Equal(t, intSkid, certSkid)
 }
 
 func TestBackend_ConsulSignLeafWithLegacyRole(t *testing.T) {
 	t.Parallel()
 	// create the backend
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// generate root
 	data, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
@@ -2545,7 +2647,7 @@ func TestBackend_ConsulSignLeafWithLegacyRole(t *testing.T) {
 func TestBackend_SignSelfIssued(t *testing.T) {
 	t.Parallel()
 	// create the backend
-	b, storage := createBackendWithStorage(t)
+	b, storage := CreateBackendWithStorage(t)
 
 	// generate root
 	rootData := map[string]interface{}{
@@ -2642,6 +2744,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 		},
 		MountPoint: "pki/",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("root/sign-self-issued"), logical.UpdateOperation), resp, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2686,7 +2789,7 @@ func TestBackend_SignSelfIssued(t *testing.T) {
 func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 	t.Parallel()
 	// create the backend
-	b, storage := createBackendWithStorage(t)
+	b, storage := CreateBackendWithStorage(t)
 
 	// generate root
 	rootData := map[string]interface{}{
@@ -2811,7 +2914,7 @@ func TestBackend_SignSelfIssued_DifferentTypes(t *testing.T) {
 // easy to validate.
 func TestBackend_OID_SANs(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	var err error
 	var resp *logical.Response
@@ -3034,7 +3137,7 @@ func TestBackend_OID_SANs(t *testing.T) {
 
 func TestBackend_AllowedSerialNumbers(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	var err error
 	var resp *logical.Response
@@ -3141,7 +3244,7 @@ func TestBackend_AllowedSerialNumbers(t *testing.T) {
 
 func TestBackend_URI_SANs(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	var err error
 
@@ -3593,6 +3696,7 @@ func TestReadWriteDeleteRoles(t *testing.T) {
 		"code_signing_flag":                  false,
 		"issuer_ref":                         "default",
 		"cn_validations":                     []interface{}{"email", "hostname"},
+		"allowed_user_ids":                   []interface{}{},
 	}
 
 	if diff := deep.Equal(expectedData, resp.Data); len(diff) > 0 {
@@ -3764,6 +3868,15 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Set up Metric Configuration, then restart to enable it
+	_, err = client.Logical().Write("pki/config/auto-tidy", map[string]interface{}{
+		"maintain_stored_certificate_counts":       true,
+		"publish_stored_certificate_count_metrics": true,
+	})
+	_, err = client.Logical().Write("/sys/plugins/reload/backend", map[string]interface{}{
+		"mounts": "pki/",
+	})
+
 	// Check the metrics initialized in order to calculate backendUUID for /pki
 	// BackendUUID not consistent during tests with UUID from /sys/mounts/pki
 	metricsSuffix := "total_certificates_stored"
@@ -3800,6 +3913,14 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Set up Metric Configuration, then restart to enable it
+	_, err = client.Logical().Write("pki2/config/auto-tidy", map[string]interface{}{
+		"maintain_stored_certificate_counts":       true,
+		"publish_stored_certificate_count_metrics": true,
+	})
+	_, err = client.Logical().Write("/sys/plugins/reload/backend", map[string]interface{}{
+		"mounts": "pki2/",
+	})
 
 	// Create a CSR for the intermediate CA
 	secret, err := client.Logical().Write("pki2/intermediate/generate/internal", nil)
@@ -3825,6 +3946,7 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if secret == nil || len(secret.Data) == 0 || len(secret.Data["certificate"].(string)) == 0 {
 		t.Fatal("expected certificate information from read operation")
 	}
@@ -3907,20 +4029,36 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 		}
 		expectedData := map[string]interface{}{
 			"safety_buffer":                         json.Number("1"),
+			"issuer_safety_buffer":                  json.Number("31536000"),
+			"revocation_queue_safety_buffer":        json.Number("172800"),
 			"tidy_cert_store":                       true,
 			"tidy_revoked_certs":                    true,
 			"tidy_revoked_cert_issuer_associations": false,
+			"tidy_expired_issuers":                  false,
+			"tidy_move_legacy_ca_bundle":            false,
+			"tidy_revocation_queue":                 false,
+			"tidy_cross_cluster_revoked_certs":      false,
 			"pause_duration":                        "0s",
 			"state":                                 "Finished",
 			"error":                                 nil,
 			"time_started":                          nil,
 			"time_finished":                         nil,
+			"last_auto_tidy_finished":               nil,
 			"message":                               nil,
 			"cert_store_deleted_count":              json.Number("1"),
 			"revoked_cert_deleted_count":            json.Number("1"),
 			"missing_issuer_cert_count":             json.Number("0"),
 			"current_cert_store_count":              json.Number("0"),
 			"current_revoked_cert_count":            json.Number("0"),
+			"revocation_queue_deleted_count":        json.Number("0"),
+			"cross_revoked_cert_deleted_count":      json.Number("0"),
+			"internal_backend_uuid":                 backendUUID,
+			"tidy_acme":                             false,
+			"acme_account_safety_buffer":            json.Number("2592000"),
+			"acme_orders_deleted_count":             json.Number("0"),
+			"acme_account_revoked_count":            json.Number("0"),
+			"acme_account_deleted_count":            json.Number("0"),
+			"total_acme_account_count":              json.Number("0"),
 		}
 		// Let's copy the times from the response so that we can use deep.Equal()
 		timeStarted, ok := tidyStatus.Data["time_started"]
@@ -3933,6 +4071,7 @@ func TestBackend_RevokePlusTidy_Intermediate(t *testing.T) {
 			t.Fatal("Expected tidy status response to include a value for time_finished")
 		}
 		expectedData["time_finished"] = timeFinished
+		expectedData["last_auto_tidy_finished"] = tidyStatus.Data["last_auto_tidy_finished"]
 
 		if diff := deep.Equal(expectedData, tidyStatus.Data); diff != nil {
 			t.Fatal(diff)
@@ -4021,7 +4160,7 @@ func TestBackend_Root_FullCAChain(t *testing.T) {
 
 func runFullCAChainTest(t *testing.T, keyType string) {
 	// Generate a root CA at /pki-root
-	b_root, s_root := createBackendWithStorage(t)
+	b_root, s_root := CreateBackendWithStorage(t)
 
 	var err error
 
@@ -4067,7 +4206,7 @@ func runFullCAChainTest(t *testing.T, keyType string) {
 	requireCertInCaChainArray(t, fullChainArray, rootCert, "expected root cert within root issuance pki-root/issue/example")
 
 	// Now generate an intermediate at /pki-intermediate, signed by the root.
-	b_int, s_int := createBackendWithStorage(t)
+	b_int, s_int := CreateBackendWithStorage(t)
 
 	resp, err = CBWrite(b_int, s_int, "intermediate/generate/exported", map[string]interface{}{
 		"common_name": "intermediate myvault.com",
@@ -4147,7 +4286,7 @@ func runFullCAChainTest(t *testing.T, keyType string) {
 
 	// Finally, import this signing cert chain into a new mount to ensure
 	// "external" CAs behave as expected.
-	b_ext, s_ext := createBackendWithStorage(t)
+	b_ext, s_ext := CreateBackendWithStorage(t)
 
 	_, err = CBWrite(b_ext, s_ext, "config/ca", map[string]interface{}{
 		"pem_bundle": intermediateKey + "\n" + intermediateCert + "\n" + rootCert + "\n",
@@ -4486,7 +4625,7 @@ func TestBackend_Roles_IssuanceRegression(t *testing.T) {
 		t.Fatalf("misnumbered test case entries will make it hard to find bugs: %v", len(testCases))
 	}
 
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// We need a RSA key so all signature sizes are valid with it.
 	resp, err := CBWrite(b, s, "root/generate/exported", map[string]interface{}{
@@ -4655,7 +4794,7 @@ func TestBackend_Roles_KeySizeRegression(t *testing.T) {
 		t.Fatalf("misnumbered test case entries will make it hard to find bugs: %v", len(testCases))
 	}
 
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	tested := 0
 	for index, test := range testCases {
@@ -4667,7 +4806,7 @@ func TestBackend_Roles_KeySizeRegression(t *testing.T) {
 
 func TestRootWithExistingKey(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 	var err error
 
 	// Fail requests if type is existing, and we specify the key_type param
@@ -4718,6 +4857,7 @@ func TestRootWithExistingKey(t *testing.T) {
 		"key_type":    "rsa",
 		"issuer_name": "my-issuer1",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("issuers/generate/root/internal"), logical.UpdateOperation), resp, true)
 	require.NoError(t, err)
 	require.NotNil(t, resp.Data["certificate"])
 	myIssuerId1 := resp.Data["issuer_id"]
@@ -4800,7 +4940,7 @@ func TestRootWithExistingKey(t *testing.T) {
 
 func TestIntermediateWithExistingKey(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	var err error
 
@@ -4833,6 +4973,7 @@ func TestIntermediateWithExistingKey(t *testing.T) {
 		"common_name": "root myvault.com",
 		"key_type":    "rsa",
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("issuers/generate/intermediate/internal"), logical.UpdateOperation), resp, true)
 	require.NoError(t, err)
 	// csr1 := resp.Data["csr"]
 	myKeyId1 := resp.Data["key_id"]
@@ -4865,7 +5006,7 @@ func TestIntermediateWithExistingKey(t *testing.T) {
 
 func TestIssuanceTTLs(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
 		"common_name": "root example.com",
@@ -4943,7 +5084,7 @@ func TestIssuanceTTLs(t *testing.T) {
 
 func TestSealWrappedStorageConfigured(t *testing.T) {
 	t.Parallel()
-	b, _ := createBackendWithStorage(t)
+	b, _ := CreateBackendWithStorage(t)
 	wrappedEntries := b.Backend.PathsSpecial.SealWrapStorage
 
 	// Make sure our legacy bundle is within the list
@@ -4955,7 +5096,7 @@ func TestSealWrappedStorageConfigured(t *testing.T) {
 
 func TestBackend_ConfigCA_WithECParams(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// Generated key with OpenSSL:
 	// $ openssl ecparam -out p256.key -name prime256v1 -genkey
@@ -4984,7 +5125,7 @@ AwEHoUQDQgAE57NX8bR/nDoW8yRgLswoXBQcjHrdyfuHS0gPwki6BNnfunUzryVb
 
 func TestPerIssuerAIA(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// Generating a root without anything should not have AIAs.
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
@@ -5000,9 +5141,11 @@ func TestPerIssuerAIA(t *testing.T) {
 	require.Empty(t, rootCert.CRLDistributionPoints)
 
 	// Set some local URLs on the issuer.
-	_, err = CBWrite(b, s, "issuer/default", map[string]interface{}{
+	resp, err = CBWrite(b, s, "issuer/default", map[string]interface{}{
 		"issuing_certificates": []string{"https://google.com"},
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("issuer/default"), logical.UpdateOperation), resp, true)
+
 	require.NoError(t, err)
 
 	_, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
@@ -5069,7 +5212,7 @@ func TestPerIssuerAIA(t *testing.T) {
 
 func TestIssuersWithoutCRLBits(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// Importing a root without CRL signing bits should work fine.
 	customBundleWithoutCRLBits := `
@@ -5124,6 +5267,7 @@ TgM7RZnmEjNdeaa4M52o7VY=
 	resp, err := CBWrite(b, s, "issuers/import/bundle", map[string]interface{}{
 		"pem_bundle": customBundleWithoutCRLBits,
 	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("issuers/import/bundle"), logical.UpdateOperation), resp, true)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotEmpty(t, resp.Data)
@@ -5165,7 +5309,8 @@ func TestBackend_IfModifiedSinceHeaders(t *testing.T) {
 		},
 	}
 	cluster := vault.NewTestCluster(t, coreConfig, &vault.TestClusterOptions{
-		HandlerFunc: vaulthttp.Handler,
+		HandlerFunc:             vaulthttp.Handler,
+		RequestResponseCallback: schema.ResponseValidatingCallback(t),
 	})
 	cluster.Start()
 	defer cluster.Cleanup()
@@ -5454,17 +5599,17 @@ func TestBackend_IfModifiedSinceHeaders(t *testing.T) {
 		lastHeaders = client.Headers()
 	}
 
-	time.Sleep(4 * time.Second)
-
-	beforeDeltaRotation := time.Now().Add(-2 * time.Second)
-
 	// Finally, rebuild the delta CRL and ensure that only that is
-	// invalidated. We first need to enable it though.
+	// invalidated. We first need to enable it though, and wait for
+	// all CRLs to rebuild.
 	_, err = client.Logical().Write("pki/config/crl", map[string]interface{}{
 		"auto_rebuild": true,
 		"enable_delta": true,
 	})
 	require.NoError(t, err)
+	time.Sleep(4 * time.Second)
+	beforeDeltaRotation := time.Now().Add(-2 * time.Second)
+
 	resp, err = client.Logical().Read("pki/crl/rotate-delta")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -5514,7 +5659,7 @@ func TestBackend_IfModifiedSinceHeaders(t *testing.T) {
 
 func TestBackend_InitializeCertificateCounts(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 	ctx := context.Background()
 
 	// Set up an Issuer and Role
@@ -5553,6 +5698,14 @@ func TestBackend_InitializeCertificateCounts(t *testing.T) {
 		serials[i] = resp.Data["serial_number"].(string)
 	}
 
+	// Turn on certificate counting:
+	CBWrite(b, s, "config/auto-tidy", map[string]interface{}{
+		"maintain_stored_certificate_counts":       true,
+		"publish_stored_certificate_count_metrics": false,
+	})
+	// Assert initialize from clean is correct:
+	b.initializeStoredCertificateCounts(ctx)
+
 	// Revoke certificates A + B
 	revocations := serials[0:2]
 	for _, key := range revocations {
@@ -5564,18 +5717,16 @@ func TestBackend_InitializeCertificateCounts(t *testing.T) {
 		}
 	}
 
-	// Assert initialize from clean is correct:
-	b.initializeStoredCertificateCounts(ctx)
-	if atomic.LoadUint32(b.certCount) != 6 {
-		t.Fatalf("Failed to count six certificates root,A,B,C,D,E, instead counted %d certs", atomic.LoadUint32(b.certCount))
+	if b.certCount.Load() != 6 {
+		t.Fatalf("Failed to count six certificates root,A,B,C,D,E, instead counted %d certs", b.certCount.Load())
 	}
-	if atomic.LoadUint32(b.revokedCertCount) != 2 {
-		t.Fatalf("Failed to count two revoked certificates A+B, instead counted %d certs", atomic.LoadUint32(b.revokedCertCount))
+	if b.revokedCertCount.Load() != 2 {
+		t.Fatalf("Failed to count two revoked certificates A+B, instead counted %d certs", b.revokedCertCount.Load())
 	}
 
 	// Simulates listing while initialize in progress, by "restarting it"
-	atomic.StoreUint32(b.certCount, 0)
-	atomic.StoreUint32(b.revokedCertCount, 0)
+	b.certCount.Store(0)
+	b.revokedCertCount.Store(0)
 	b.certsCounted.Store(false)
 
 	// Revoke certificates C, D
@@ -5604,12 +5755,12 @@ func TestBackend_InitializeCertificateCounts(t *testing.T) {
 	b.initializeStoredCertificateCounts(ctx)
 
 	// Test certificate count
-	if atomic.LoadUint32(b.certCount) != 8 {
-		t.Fatalf("Failed to initialize count of certificates root, A,B,C,D,E,F,G counted %d certs", *(b.certCount))
+	if b.certCount.Load() != 8 {
+		t.Fatalf("Failed to initialize count of certificates root, A,B,C,D,E,F,G counted %d certs", b.certCount.Load())
 	}
 
-	if atomic.LoadUint32(b.revokedCertCount) != 4 {
-		t.Fatalf("Failed to count revoked certificates A,B,C,D counted %d certs", *(b.revokedCertCount))
+	if b.revokedCertCount.Load() != 4 {
+		t.Fatalf("Failed to count revoked certificates A,B,C,D counted %d certs", b.revokedCertCount.Load())
 	}
 
 	return
@@ -5620,7 +5771,7 @@ func TestBackend_InitializeCertificateCounts(t *testing.T) {
 // for fields across the two APIs.
 func TestBackend_VerifyIssuerUpdateDefaultsMatchCreation(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
 		"common_name": "myvault.com",
@@ -5649,7 +5800,7 @@ func TestBackend_VerifyIssuerUpdateDefaultsMatchCreation(t *testing.T) {
 
 func TestBackend_VerifyPSSKeysIssuersFailImport(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// PKCS8 parsing fails on this key due to rsaPSS OID
 	rsaOIDKey := `
@@ -5852,7 +6003,7 @@ EBuOIhCv6WiwVyGeTVynuHYkHyw3rIL/zU7N8+zIFV2G2M1UAv5D/eyh/74cr9Of
 
 func TestPKI_EmptyCRLConfigUpgraded(t *testing.T) {
 	t.Parallel()
-	b, s := createBackendWithStorage(t)
+	b, s := CreateBackendWithStorage(t)
 
 	// Write an empty CRLConfig into storage.
 	crlConfigEntry, err := logical.StorageEntryJSON("config/crl", &crlConfig{})
@@ -5871,6 +6022,499 @@ func TestPKI_EmptyCRLConfigUpgraded(t *testing.T) {
 	require.Equal(t, resp.Data["auto_rebuild_grace_period"], defaultCrlConfig.AutoRebuildGracePeriod)
 	require.Equal(t, resp.Data["enable_delta"], defaultCrlConfig.EnableDelta)
 	require.Equal(t, resp.Data["delta_rebuild_interval"], defaultCrlConfig.DeltaRebuildInterval)
+}
+
+func TestPKI_ListRevokedCerts(t *testing.T) {
+	t.Parallel()
+	b, s := CreateBackendWithStorage(t)
+
+	// Test empty cluster
+	resp, err := CBList(b, s, "certs/revoked")
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("certs/revoked"), logical.ListOperation), resp, true)
+	requireSuccessNonNilResponse(t, resp, err, "failed listing empty cluster")
+	require.Empty(t, resp.Data, "response map contained data that we did not expect")
+
+	// Set up a mount that we can revoke under (We will create 3 leaf certs, 2 of which will be revoked)
+	resp, err = CBWrite(b, s, "root/generate/internal", map[string]interface{}{
+		"common_name": "test.com",
+		"key_type":    "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "error generating root CA")
+	requireFieldsSetInResp(t, resp, "serial_number")
+	issuerSerial := resp.Data["serial_number"]
+
+	resp, err = CBWrite(b, s, "roles/test", map[string]interface{}{
+		"allowed_domains":  "test.com",
+		"allow_subdomains": "true",
+		"max_ttl":          "1h",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "error setting up pki role")
+
+	resp, err = CBWrite(b, s, "issue/test", map[string]interface{}{
+		"common_name": "test1.test.com",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "error issuing cert 1")
+	requireFieldsSetInResp(t, resp, "serial_number")
+	serial1 := resp.Data["serial_number"]
+
+	resp, err = CBWrite(b, s, "issue/test", map[string]interface{}{
+		"common_name": "test2.test.com",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "error issuing cert 2")
+	requireFieldsSetInResp(t, resp, "serial_number")
+	serial2 := resp.Data["serial_number"]
+
+	resp, err = CBWrite(b, s, "issue/test", map[string]interface{}{
+		"common_name": "test3.test.com",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "error issuing cert 2")
+	requireFieldsSetInResp(t, resp, "serial_number")
+	serial3 := resp.Data["serial_number"]
+
+	resp, err = CBWrite(b, s, "revoke", map[string]interface{}{"serial_number": serial1})
+	requireSuccessNonNilResponse(t, resp, err, "error revoking cert 1")
+
+	resp, err = CBWrite(b, s, "revoke", map[string]interface{}{"serial_number": serial2})
+	requireSuccessNonNilResponse(t, resp, err, "error revoking cert 2")
+
+	// Test that we get back the expected revoked serial numbers.
+	resp, err = CBList(b, s, "certs/revoked")
+	requireSuccessNonNilResponse(t, resp, err, "failed listing revoked certs")
+	requireFieldsSetInResp(t, resp, "keys")
+	revokedKeys := resp.Data["keys"].([]string)
+
+	require.Contains(t, revokedKeys, serial1)
+	require.Contains(t, revokedKeys, serial2)
+	require.Equal(t, 2, len(revokedKeys), "Expected 2 revoked entries got %d: %v", len(revokedKeys), revokedKeys)
+
+	// Test that listing our certs returns a different response
+	resp, err = CBList(b, s, "certs")
+	requireSuccessNonNilResponse(t, resp, err, "failed listing written certs")
+	requireFieldsSetInResp(t, resp, "keys")
+	certKeys := resp.Data["keys"].([]string)
+
+	require.Contains(t, certKeys, serial1)
+	require.Contains(t, certKeys, serial2)
+	require.Contains(t, certKeys, serial3)
+	require.Contains(t, certKeys, issuerSerial)
+	require.Equal(t, 4, len(certKeys), "Expected 4 cert entries got %d: %v", len(certKeys), certKeys)
+}
+
+func TestPKI_TemplatedAIAs(t *testing.T) {
+	t.Parallel()
+	b, s := CreateBackendWithStorage(t)
+
+	// Setting templated AIAs should succeed.
+	resp, err := CBWrite(b, s, "config/cluster", map[string]interface{}{
+		"path":     "http://localhost:8200/v1/pki",
+		"aia_path": "http://localhost:8200/cdn/pki",
+	})
+	require.NoError(t, err)
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("config/cluster"), logical.UpdateOperation), resp, true)
+
+	resp, err = CBRead(b, s, "config/cluster")
+	require.NoError(t, err)
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("config/cluster"), logical.ReadOperation), resp, true)
+
+	aiaData := map[string]interface{}{
+		"crl_distribution_points": "{{cluster_path}}/issuer/{{issuer_id}}/crl/der",
+		"issuing_certificates":    "{{cluster_aia_path}}/issuer/{{issuer_id}}/der",
+		"ocsp_servers":            "{{cluster_path}}/ocsp",
+		"enable_templating":       true,
+	}
+	_, err = CBWrite(b, s, "config/urls", aiaData)
+	require.NoError(t, err)
+
+	// Root generation should succeed, but without AIA info.
+	rootData := map[string]interface{}{
+		"common_name": "Long-Lived Root X1",
+		"issuer_name": "long-root-x1",
+		"key_type":    "ec",
+	}
+	resp, err = CBWrite(b, s, "root/generate/internal", rootData)
+	require.NoError(t, err)
+	_, err = CBDelete(b, s, "root")
+	require.NoError(t, err)
+
+	// Clearing the config and regenerating the root should still succeed.
+	_, err = CBWrite(b, s, "config/urls", map[string]interface{}{
+		"crl_distribution_points": "{{cluster_path}}/issuer/my-root-id/crl/der",
+		"issuing_certificates":    "{{cluster_aia_path}}/issuer/my-root-id/der",
+		"ocsp_servers":            "{{cluster_path}}/ocsp",
+		"enable_templating":       true,
+	})
+	require.NoError(t, err)
+	resp, err = CBWrite(b, s, "root/generate/internal", rootData)
+	requireSuccessNonNilResponse(t, resp, err)
+	issuerId := string(resp.Data["issuer_id"].(issuerID))
+
+	// Now write the original AIA config and sign a leaf.
+	_, err = CBWrite(b, s, "config/urls", aiaData)
+	require.NoError(t, err)
+	_, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allow_any_name": "true",
+		"key_type":       "ec",
+		"ttl":            "50m",
+	})
+	require.NoError(t, err)
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "example.com",
+	})
+	requireSuccessNonNilResponse(t, resp, err)
+
+	// Validate the AIA info is correctly templated.
+	cert := parseCert(t, resp.Data["certificate"].(string))
+	require.Equal(t, cert.OCSPServer, []string{"http://localhost:8200/v1/pki/ocsp"})
+	require.Equal(t, cert.IssuingCertificateURL, []string{"http://localhost:8200/cdn/pki/issuer/" + issuerId + "/der"})
+	require.Equal(t, cert.CRLDistributionPoints, []string{"http://localhost:8200/v1/pki/issuer/" + issuerId + "/crl/der"})
+
+	// Modify our issuer to set custom AIAs: these URLs are bad.
+	_, err = CBPatch(b, s, "issuer/default", map[string]interface{}{
+		"enable_aia_url_templating": "false",
+		"crl_distribution_points":   "a",
+		"issuing_certificates":      "b",
+		"ocsp_servers":              "c",
+	})
+	require.Error(t, err)
+
+	// These URLs are good.
+	_, err = CBPatch(b, s, "issuer/default", map[string]interface{}{
+		"enable_aia_url_templating": "false",
+		"crl_distribution_points":   "http://localhost/a",
+		"issuing_certificates":      "http://localhost/b",
+		"ocsp_servers":              "http://localhost/c",
+	})
+
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "example.com",
+	})
+	requireSuccessNonNilResponse(t, resp, err)
+
+	// Validate the AIA info is correctly templated.
+	cert = parseCert(t, resp.Data["certificate"].(string))
+	require.Equal(t, cert.OCSPServer, []string{"http://localhost/c"})
+	require.Equal(t, cert.IssuingCertificateURL, []string{"http://localhost/b"})
+	require.Equal(t, cert.CRLDistributionPoints, []string{"http://localhost/a"})
+
+	// These URLs are bad, but will fail at issuance time due to AIA templating.
+	resp, err = CBPatch(b, s, "issuer/default", map[string]interface{}{
+		"enable_aia_url_templating": "true",
+		"crl_distribution_points":   "a",
+		"issuing_certificates":      "b",
+		"ocsp_servers":              "c",
+	})
+	requireSuccessNonNilResponse(t, resp, err)
+	require.NotEmpty(t, resp.Warnings)
+	_, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "example.com",
+	})
+	require.Error(t, err)
+}
+
+func requireSubjectUserIDAttr(t *testing.T, cert string, target string) {
+	xCert := parseCert(t, cert)
+
+	for _, attr := range xCert.Subject.Names {
+		var userID string
+		if attr.Type.Equal(certutil.SubjectPilotUserIDAttributeOID) {
+			if target == "" {
+				t.Fatalf("expected no UserID (OID: %v) subject attributes in cert:\n%v", certutil.SubjectPilotUserIDAttributeOID, cert)
+			}
+
+			switch aValue := attr.Value.(type) {
+			case string:
+				userID = aValue
+			case []byte:
+				userID = string(aValue)
+			default:
+				t.Fatalf("unknown type for UserID attribute: %v\nCert: %v", attr, cert)
+			}
+
+			if userID == target {
+				return
+			}
+		}
+	}
+
+	if target != "" {
+		t.Fatalf("failed to find UserID (OID: %v) matching %v in cert:\n%v", certutil.SubjectPilotUserIDAttributeOID, target, cert)
+	}
+}
+
+func TestUserIDsInLeafCerts(t *testing.T) {
+	t.Parallel()
+	b, s := CreateBackendWithStorage(t)
+
+	// 1. Setup root issuer.
+	resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
+		"common_name": "Vault Root CA",
+		"key_type":    "ec",
+		"ttl":         "7200h",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed generating root issuer")
+
+	// 2. Allow no user IDs.
+	resp, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allowed_user_ids": "",
+		"key_type":         "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed setting up role")
+
+	// - Issue cert without user IDs should work.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "")
+
+	// - Issue cert with user ID should fail.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid",
+	})
+	require.Error(t, err)
+	require.True(t, resp.IsError())
+
+	// 3. Allow any user IDs.
+	resp, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allowed_user_ids": "*",
+		"key_type":         "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed setting up role")
+
+	// - Issue cert without user IDs.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "")
+
+	// - Issue cert with one user ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+
+	// - Issue cert with two user IDs.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid,robot",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "robot")
+
+	// 4. Allow one specific user ID.
+	resp, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allowed_user_ids": "humanoid",
+		"key_type":         "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed setting up role")
+
+	// - Issue cert without user IDs.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "")
+
+	// - Issue cert with approved ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+
+	// - Issue cert with non-approved user ID should fail.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "robot",
+	})
+	require.Error(t, err)
+	require.True(t, resp.IsError())
+
+	// - Issue cert with one approved and one non-approved should also fail.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid,robot",
+	})
+	require.Error(t, err)
+	require.True(t, resp.IsError())
+
+	// 5. Allow two specific user IDs.
+	resp, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allowed_user_ids": "humanoid,robot",
+		"key_type":         "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed setting up role")
+
+	// - Issue cert without user IDs.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "")
+
+	// - Issue cert with one approved ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+
+	// - Issue cert with other user ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "robot",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "robot")
+
+	// - Issue cert with unknown user ID will fail.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "robot2",
+	})
+	require.Error(t, err)
+	require.True(t, resp.IsError())
+
+	// - Issue cert with both should succeed.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid,robot",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "robot")
+
+	// 6. Use a glob.
+	resp, err = CBWrite(b, s, "roles/testing", map[string]interface{}{
+		"allowed_user_ids": "human*",
+		"key_type":         "ec",
+		"use_csr_sans":     true, // setup for further testing.
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed setting up role")
+
+	// - Issue cert without user IDs.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "")
+
+	// - Issue cert with approved ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "humanoid",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+
+	// - Issue cert with another approved ID.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "human",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "human")
+
+	// - Issue cert with literal glob.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "human*",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "human*")
+
+	// - Still no robotic certs are allowed; will fail.
+	resp, err = CBWrite(b, s, "issue/testing", map[string]interface{}{
+		"common_name": "localhost",
+		"user_ids":    "robot",
+	})
+	require.Error(t, err)
+	require.True(t, resp.IsError())
+
+	// Create a CSR and validate it works with both sign/ and sign-verbatim.
+	csrTemplate := x509.CertificateRequest{
+		Subject: pkix.Name{
+			CommonName: "localhost",
+			ExtraNames: []pkix.AttributeTypeAndValue{
+				{
+					Type:  certutil.SubjectPilotUserIDAttributeOID,
+					Value: "humanoid",
+				},
+			},
+		},
+	}
+	_, _, csrPem := generateCSR(t, &csrTemplate, "ec", 256)
+
+	// Should work with role-based signing.
+	resp, err = CBWrite(b, s, "sign/testing", map[string]interface{}{
+		"csr": csrPem,
+	})
+	schema.ValidateResponse(t, schema.GetResponseSchema(t, b.Route("sign/testing"), logical.UpdateOperation), resp, true)
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+
+	// - Definitely will work with sign-verbatim.
+	resp, err = CBWrite(b, s, "sign-verbatim", map[string]interface{}{
+		"csr": csrPem,
+	})
+	requireSuccessNonNilResponse(t, resp, err, "failed issuing leaf cert")
+	requireSubjectUserIDAttr(t, resp.Data["certificate"].(string), "humanoid")
+}
+
+// TestStandby_Operations test proper forwarding for PKI requests from a standby node to the
+// active node within a cluster.
+func TestStandby_Operations(t *testing.T) {
+	conf, opts := teststorage.ClusterSetup(&vault.CoreConfig{
+		LogicalBackends: map[string]logical.Factory{
+			"pki": Factory,
+		},
+	}, nil, teststorage.InmemBackendSetup)
+	cluster := vault.NewTestCluster(t, conf, opts)
+	cluster.Start()
+	defer cluster.Cleanup()
+
+	testhelpers.WaitForActiveNodeAndStandbys(t, cluster)
+	standbyCores := testhelpers.DeriveStandbyCores(t, cluster)
+	require.Greater(t, len(standbyCores), 0, "Need at least one standby core.")
+	client := standbyCores[0].Client
+
+	mountPKIEndpoint(t, client, "pki")
+
+	_, err := client.Logical().Write("pki/root/generate/internal", map[string]interface{}{
+		"key_type":    "ec",
+		"common_name": "root-ca.com",
+		"ttl":         "600h",
+	})
+	require.NoError(t, err, "error setting up pki role: %v", err)
+
+	_, err = client.Logical().Write("pki/roles/example", map[string]interface{}{
+		"allowed_domains":  "example.com",
+		"allow_subdomains": "true",
+		"no_store":         "false", // make sure we store this cert
+		"ttl":              "5h",
+		"key_type":         "ec",
+	})
+	require.NoError(t, err, "error setting up pki role: %v", err)
+
+	resp, err := client.Logical().Write("pki/issue/example", map[string]interface{}{
+		"common_name": "test.example.com",
+	})
+	require.NoError(t, err, "error issuing certificate: %v", err)
+	require.NotNil(t, resp, "got nil response from issuing request")
+	serialOfCert := resp.Data["serial_number"].(string)
+
+	resp, err = client.Logical().Write("pki/revoke", map[string]interface{}{
+		"serial_number": serialOfCert,
+	})
+	require.NoError(t, err, "error revoking certificate: %v", err)
+	require.NotNil(t, resp, "got nil response from revoke request")
 }
 
 type pathAuthCheckerFunc func(t *testing.T, client *api.Client, path string, token string)
@@ -6101,7 +6745,7 @@ func TestProperAuthing(t *testing.T) {
 		t.Fatal(err)
 	}
 	serial := resp.Data["serial_number"].(string)
-
+	eabKid := "13b80844-e60d-42d2-b7e9-152a8e834b90"
 	paths := map[string]pathAuthChecker{
 		"ca_chain":                               shouldBeUnauthedReadList,
 		"cert/ca_chain":                          shouldBeUnauthedReadList,
@@ -6116,10 +6760,22 @@ func TestProperAuthing(t *testing.T) {
 		"cert/delta-crl":                         shouldBeUnauthedReadList,
 		"cert/delta-crl/raw":                     shouldBeUnauthedReadList,
 		"cert/delta-crl/raw/pem":                 shouldBeUnauthedReadList,
+		"cert/unified-crl":                       shouldBeUnauthedReadList,
+		"cert/unified-crl/raw":                   shouldBeUnauthedReadList,
+		"cert/unified-crl/raw/pem":               shouldBeUnauthedReadList,
+		"cert/unified-delta-crl":                 shouldBeUnauthedReadList,
+		"cert/unified-delta-crl/raw":             shouldBeUnauthedReadList,
+		"cert/unified-delta-crl/raw/pem":         shouldBeUnauthedReadList,
 		"certs":                                  shouldBeAuthed,
 		"certs/revoked":                          shouldBeAuthed,
+		"certs/revocation-queue":                 shouldBeAuthed,
+		"certs/revocation-queue/":                shouldBeAuthed,
+		"certs/unified-revoked":                  shouldBeAuthed,
+		"certs/unified-revoked/":                 shouldBeAuthed,
+		"config/acme":                            shouldBeAuthed,
 		"config/auto-tidy":                       shouldBeAuthed,
 		"config/ca":                              shouldBeAuthed,
+		"config/cluster":                         shouldBeAuthed,
 		"config/crl":                             shouldBeAuthed,
 		"config/issuers":                         shouldBeAuthed,
 		"config/keys":                            shouldBeAuthed,
@@ -6147,6 +6803,12 @@ func TestProperAuthing(t *testing.T) {
 		"issuer/default/crl/delta":               shouldBeUnauthedReadList,
 		"issuer/default/crl/delta/der":           shouldBeUnauthedReadList,
 		"issuer/default/crl/delta/pem":           shouldBeUnauthedReadList,
+		"issuer/default/unified-crl":             shouldBeUnauthedReadList,
+		"issuer/default/unified-crl/pem":         shouldBeUnauthedReadList,
+		"issuer/default/unified-crl/der":         shouldBeUnauthedReadList,
+		"issuer/default/unified-crl/delta":       shouldBeUnauthedReadList,
+		"issuer/default/unified-crl/delta/der":   shouldBeUnauthedReadList,
+		"issuer/default/unified-crl/delta/pem":   shouldBeUnauthedReadList,
 		"issuer/default/issue/test":              shouldBeAuthed,
 		"issuer/default/resign-crls":             shouldBeAuthed,
 		"issuer/default/revoke":                  shouldBeAuthed,
@@ -6197,7 +6859,35 @@ func TestProperAuthing(t *testing.T) {
 		"tidy":                                   shouldBeAuthed,
 		"tidy-cancel":                            shouldBeAuthed,
 		"tidy-status":                            shouldBeAuthed,
+		"unified-crl":                            shouldBeUnauthedReadList,
+		"unified-crl/pem":                        shouldBeUnauthedReadList,
+		"unified-crl/delta":                      shouldBeUnauthedReadList,
+		"unified-crl/delta/pem":                  shouldBeUnauthedReadList,
+		"unified-ocsp":                           shouldBeUnauthedWriteOnly,
+		"unified-ocsp/dGVzdAo=":                  shouldBeUnauthedReadList,
+		"eab":                                    shouldBeAuthed,
+		"eab/" + eabKid:                          shouldBeAuthed,
 	}
+
+	// Add ACME based paths to the test suite
+	for _, acmePrefix := range []string{"", "issuer/default/", "roles/test/", "issuer/default/roles/test/"} {
+		paths[acmePrefix+"acme/directory"] = shouldBeUnauthedReadList
+		paths[acmePrefix+"acme/new-nonce"] = shouldBeUnauthedReadList
+		paths[acmePrefix+"acme/new-account"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/revoke-cert"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/new-order"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/orders"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/account/hrKmDYTvicHoHGVN2-3uzZV_BPGdE0W_dNaqYTtYqeo="] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/authorization/29da8c38-7a09-465e-b9a6-3d76802b1afd"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/challenge/29da8c38-7a09-465e-b9a6-3d76802b1afd/http-01"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/order/13b80844-e60d-42d2-b7e9-152a8e834b90"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/order/13b80844-e60d-42d2-b7e9-152a8e834b90/finalize"] = shouldBeUnauthedWriteOnly
+		paths[acmePrefix+"acme/order/13b80844-e60d-42d2-b7e9-152a8e834b90/cert"] = shouldBeUnauthedWriteOnly
+
+		// Make sure this new-eab path is auth'd
+		paths[acmePrefix+"acme/new-eab"] = shouldBeAuthed
+	}
+
 	for path, checkerType := range paths {
 		checker := pathAuthChckerMap[checkerType]
 		checker(t, client, "pki/"+path, token)
@@ -6207,13 +6897,6 @@ func TestProperAuthing(t *testing.T) {
 	openAPIResp, err := client.Logical().ReadWithContext(ctx, "sys/internal/specs/openapi")
 	if err != nil {
 		t.Fatalf("failed to get openapi data: %v", err)
-	}
-
-	for openapi_path := range openAPIResp.Data["paths"].(map[string]interface{}) {
-		if strings.HasPrefix(openapi_path, "/pki/") && strings.Contains(openapi_path, "//") {
-			t.Skipf("Skipping OpenAPI validation due to malformed PKI paths: %v", openapi_path)
-			return
-		}
 	}
 
 	validatedPath := false
@@ -6247,6 +6930,21 @@ func TestProperAuthing(t *testing.T) {
 		}
 		if strings.Contains(raw_path, "{serial}") {
 			raw_path = strings.ReplaceAll(raw_path, "{serial}", serial)
+		}
+		if strings.Contains(raw_path, "acme/account/") && strings.Contains(raw_path, "{kid}") {
+			raw_path = strings.ReplaceAll(raw_path, "{kid}", "hrKmDYTvicHoHGVN2-3uzZV_BPGdE0W_dNaqYTtYqeo=")
+		}
+		if strings.Contains(raw_path, "acme/") && strings.Contains(raw_path, "{auth_id}") {
+			raw_path = strings.ReplaceAll(raw_path, "{auth_id}", "29da8c38-7a09-465e-b9a6-3d76802b1afd")
+		}
+		if strings.Contains(raw_path, "acme/") && strings.Contains(raw_path, "{challenge_type}") {
+			raw_path = strings.ReplaceAll(raw_path, "{challenge_type}", "http-01")
+		}
+		if strings.Contains(raw_path, "acme/") && strings.Contains(raw_path, "{order_id}") {
+			raw_path = strings.ReplaceAll(raw_path, "{order_id}", "13b80844-e60d-42d2-b7e9-152a8e834b90")
+		}
+		if strings.Contains(raw_path, "eab") && strings.Contains(raw_path, "{key_id}") {
+			raw_path = strings.ReplaceAll(raw_path, "{key_id}", eabKid)
 		}
 
 		handler, present := paths[raw_path]
@@ -6284,6 +6982,150 @@ func TestProperAuthing(t *testing.T) {
 	if !validatedPath {
 		t.Fatalf("Expected to have validated at least one path.")
 	}
+}
+
+func TestPatchIssuer(t *testing.T) {
+	t.Parallel()
+
+	type TestCase struct {
+		Field   string
+		Before  interface{}
+		Patched interface{}
+	}
+	testCases := []TestCase{
+		{
+			Field:   "issuer_name",
+			Before:  "root",
+			Patched: "root-new",
+		},
+		{
+			Field:   "leaf_not_after_behavior",
+			Before:  "err",
+			Patched: "permit",
+		},
+		{
+			Field:   "usage",
+			Before:  "crl-signing,issuing-certificates,ocsp-signing,read-only",
+			Patched: "issuing-certificates,read-only",
+		},
+		{
+			Field:   "revocation_signature_algorithm",
+			Before:  "ECDSAWithSHA256",
+			Patched: "ECDSAWithSHA384",
+		},
+		{
+			Field:   "issuing_certificates",
+			Before:  []string{"http://localhost/v1/pki-1/ca"},
+			Patched: []string{"http://localhost/v1/pki/ca"},
+		},
+		{
+			Field:   "crl_distribution_points",
+			Before:  []string{"http://localhost/v1/pki-1/crl"},
+			Patched: []string{"http://localhost/v1/pki/crl"},
+		},
+		{
+			Field:   "ocsp_servers",
+			Before:  []string{"http://localhost/v1/pki-1/ocsp"},
+			Patched: []string{"http://localhost/v1/pki/ocsp"},
+		},
+		{
+			Field:   "enable_aia_url_templating",
+			Before:  false,
+			Patched: true,
+		},
+		{
+			Field:   "manual_chain",
+			Before:  []string(nil),
+			Patched: []string{"self"},
+		},
+	}
+
+	for index, testCase := range testCases {
+		t.Logf("index: %v / tc: %v", index, testCase)
+
+		b, s := CreateBackendWithStorage(t)
+
+		// 1. Setup root issuer.
+		resp, err := CBWrite(b, s, "root/generate/internal", map[string]interface{}{
+			"common_name": "Vault Root CA",
+			"key_type":    "ec",
+			"ttl":         "7200h",
+			"issuer_name": "root",
+		})
+		requireSuccessNonNilResponse(t, resp, err, "failed generating root issuer")
+		id := string(resp.Data["issuer_id"].(issuerID))
+
+		// 2. Enable Cluster paths
+		resp, err = CBWrite(b, s, "config/urls", map[string]interface{}{
+			"path":     "https://localhost/v1/pki",
+			"aia_path": "http://localhost/v1/pki",
+		})
+		requireSuccessNonNilResponse(t, resp, err, "failed updating AIA config")
+
+		// 3. Add AIA information
+		resp, err = CBPatch(b, s, "issuer/default", map[string]interface{}{
+			"issuing_certificates":    "http://localhost/v1/pki-1/ca",
+			"crl_distribution_points": "http://localhost/v1/pki-1/crl",
+			"ocsp_servers":            "http://localhost/v1/pki-1/ocsp",
+		})
+		requireSuccessNonNilResponse(t, resp, err, "failed setting up issuer")
+
+		// 4. Read the issuer before.
+		resp, err = CBRead(b, s, "issuer/default")
+		requireSuccessNonNilResponse(t, resp, err, "failed reading root issuer before")
+		require.Equal(t, testCase.Before, resp.Data[testCase.Field], "bad expectations")
+
+		// 5. Perform modification.
+		resp, err = CBPatch(b, s, "issuer/default", map[string]interface{}{
+			testCase.Field: testCase.Patched,
+		})
+		requireSuccessNonNilResponse(t, resp, err, "failed patching root issuer")
+
+		if testCase.Field != "manual_chain" {
+			require.Equal(t, testCase.Patched, resp.Data[testCase.Field], "failed persisting value")
+		} else {
+			// self->id
+			require.Equal(t, []string{id}, resp.Data[testCase.Field], "failed persisting value")
+		}
+
+		// 6. Ensure it stuck
+		resp, err = CBRead(b, s, "issuer/default")
+		requireSuccessNonNilResponse(t, resp, err, "failed reading root issuer after")
+
+		if testCase.Field != "manual_chain" {
+			require.Equal(t, testCase.Patched, resp.Data[testCase.Field])
+		} else {
+			// self->id
+			require.Equal(t, []string{id}, resp.Data[testCase.Field], "failed persisting value")
+		}
+	}
+}
+
+func TestGenerateRootCAWithAIA(t *testing.T) {
+	// Generate a root CA at /pki-root
+	b_root, s_root := CreateBackendWithStorage(t)
+
+	// Setup templated AIA information
+	_, err := CBWrite(b_root, s_root, "config/cluster", map[string]interface{}{
+		"path":     "https://localhost:8200",
+		"aia_path": "https://localhost:8200",
+	})
+	require.NoError(t, err, "failed to write AIA settings")
+
+	_, err = CBWrite(b_root, s_root, "config/urls", map[string]interface{}{
+		"crl_distribution_points": "{{cluster_path}}/issuer/{{issuer_id}}/crl/der",
+		"issuing_certificates":    "{{cluster_aia_path}}/issuer/{{issuer_id}}/der",
+		"ocsp_servers":            "{{cluster_path}}/ocsp",
+		"enable_templating":       true,
+	})
+	require.NoError(t, err, "failed to write AIA settings")
+
+	// Write a root issuer, this should succeed.
+	resp, err := CBWrite(b_root, s_root, "root/generate/exported", map[string]interface{}{
+		"common_name": "root myvault.com",
+		"key_type":    "ec",
+	})
+	requireSuccessNonNilResponse(t, resp, err, "expected root generation to succeed")
 }
 
 var (

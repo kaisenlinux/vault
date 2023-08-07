@@ -6,7 +6,7 @@ export GO111MODULE=on
 #export NODE_OPTIONS=--openssl-legacy-provider
 
 %:
-	dh $@ --buildsystem=golang
+	dh $@ --buildsystem=golang --builddirectory=_build
 
 override_dh_auto_clean:
 	rm -rf $(CURDIR)/_build
@@ -32,9 +32,9 @@ override_dh_auto_test:
 	go test
 
 override_dh_auto_install:
-	cp -f $(CURDIR)/bin/vault $(CURDIR)/debian/vault/usr/bin
+	install -p -m 0755 $(CURDIR)/bin/vault $(CURDIR)/debian/vault/usr/bin
+	install -p -m 0644 $(CURDIR)/debian/vault.png $(CURDIR)/debian/vault/usr/share/pixmaps
 	cp -rf $(CURDIR)/debian/etc/* $(CURDIR)/debian/vault/etc/
-	cp -f $(CURDIR)/debian/vault.png $(CURDIR)/debian/vault/usr/share/pixmaps
 
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start

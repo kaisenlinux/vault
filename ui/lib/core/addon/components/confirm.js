@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import Component from '@ember/component';
 import { computed } from '@ember/object';
 import layout from '../templates/components/confirm';
@@ -43,8 +48,7 @@ export default Component.extend({
     this.updateHeight();
   },
   updateHeight: function () {
-    let height;
-    height = this.openTrigger
+    const height = this.openTrigger
       ? this.element.querySelector('.confirm-overlay').clientHeight
       : this.element.querySelector('.confirm').clientHeight;
     this.set('height', height);

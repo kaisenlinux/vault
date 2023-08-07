@@ -13,21 +13,22 @@ import (
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/helper/wrapping"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/sdk/version"
 	"github.com/mitchellh/mapstructure"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // OpenAPI specification (OAS): https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.2.md
 const OASVersion = "3.0.2"
 
 // NewOASDocument returns an empty OpenAPI document.
-func NewOASDocument() *OASDocument {
+func NewOASDocument(version string) *OASDocument {
 	return &OASDocument{
 		Version: OASVersion,
 		Info: OASInfo{
 			Title:       "HashiCorp Vault API",
 			Description: "HTTP API that gives you full access to Vault. All API routes are prefixed with `/v1/`.",
-			Version:     version.GetVersion().Version,
+			Version:     version,
 			License: OASLicense{
 				Name: "Mozilla Public License 2.0",
 				URL:  "https://www.mozilla.org/en-US/MPL/2.0",
@@ -148,6 +149,7 @@ type OASParameter struct {
 
 type OASRequestBody struct {
 	Description string     `json:"description,omitempty"`
+	Required    bool       `json:"required,omitempty"`
 	Content     OASContent `json:"content,omitempty"`
 }
 
@@ -204,9 +206,9 @@ var (
 )
 
 // documentPaths parses all paths in a framework.Backend into OpenAPI paths.
-func documentPaths(backend *Backend, requestResponsePrefix string, genericMountPaths bool, doc *OASDocument) error {
+func documentPaths(backend *Backend, requestResponsePrefix string, doc *OASDocument) error {
 	for _, p := range backend.Paths {
-		if err := documentPath(p, backend.SpecialPaths(), requestResponsePrefix, genericMountPaths, backend.BackendType, doc); err != nil {
+		if err := documentPath(p, backend.SpecialPaths(), requestResponsePrefix, backend.BackendType, doc); err != nil {
 			return err
 		}
 	}
@@ -215,7 +217,7 @@ func documentPaths(backend *Backend, requestResponsePrefix string, genericMountP
 }
 
 // documentPath parses a framework.Path into one or more OpenAPI paths.
-func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix string, genericMountPaths bool, backendType logical.BackendType, doc *OASDocument) error {
+func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix string, backendType logical.BackendType, doc *OASDocument) error {
 	var sudoPaths []string
 	var unauthPaths []string
 
@@ -242,7 +244,7 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 		}
 	}
 
-	for _, path := range paths {
+	for pathIndex, path := range paths {
 		// Construct a top level PathItem which will be populated as the path is processed.
 		pi := OASPathItem{
 			Description: cleanString(p.HelpSynopsis),
@@ -250,7 +252,7 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 
 		pi.Sudo = specialPathMatch(path, sudoPaths)
 		pi.Unauthenticated = specialPathMatch(path, unauthPaths)
-		pi.DisplayAttrs = p.DisplayAttrs
+		pi.DisplayAttrs = withoutOperationHints(p.DisplayAttrs)
 
 		// If the newer style Operations map isn't defined, create one from the legacy fields.
 		operations := p.Operations
@@ -268,21 +270,6 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 		// Process path and header parameters, which are common to all operations.
 		// Body fields will be added to individual operations.
 		pathFields, bodyFields := splitFields(p.Fields, path)
-
-		if genericMountPaths && requestResponsePrefix != "system" && requestResponsePrefix != "identity" {
-			// Add mount path as a parameter
-			p := OASParameter{
-				Name:        "mountPath",
-				Description: "Path that the backend was mounted at",
-				In:          "path",
-				Schema: &OASSchema{
-					Type: "string",
-				},
-				Required: true,
-			}
-
-			pi.Parameters = append(pi.Parameters, p)
-		}
 
 		for name, field := range pathFields {
 			location := "path"
@@ -307,7 +294,7 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 					Pattern:      t.pattern,
 					Enum:         field.AllowedValues,
 					Default:      field.Default,
-					DisplayAttrs: field.DisplayAttrs,
+					DisplayAttrs: withoutOperationHints(field.DisplayAttrs),
 				},
 				Required:   required,
 				Deprecated: field.Deprecated,
@@ -344,9 +331,19 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 
 			op := NewOASOperation()
 
+			operationID := constructOperationID(
+				path,
+				pathIndex,
+				p.DisplayAttrs,
+				opType,
+				props.DisplayAttrs,
+				requestResponsePrefix,
+			)
+
 			op.Summary = props.Summary
 			op.Description = props.Description
 			op.Deprecated = props.Deprecated
+			op.OperationID = operationID
 
 			// Add any fields not present in the path as body parameters for POST.
 			if opType == logical.CreateOperation || opType == logical.UpdateOperation {
@@ -376,7 +373,7 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 						Enum:         field.AllowedValues,
 						Default:      field.Default,
 						Deprecated:   field.Deprecated,
-						DisplayAttrs: field.DisplayAttrs,
+						DisplayAttrs: withoutOperationHints(field.DisplayAttrs),
 					}
 					if openapiField.baseType == "array" {
 						p.Items = &OASSchema{
@@ -386,6 +383,10 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 					s.Properties[name] = &p
 				}
 
+				// Make the ordering deterministic, so that the generated OpenAPI spec document, observed over several
+				// versions, doesn't contain spurious non-semantic changes.
+				sort.Strings(s.Required)
+
 				// If examples were given, use the first one as the sample
 				// of this schema.
 				if len(props.Examples) > 0 {
@@ -394,9 +395,10 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 
 				// Set the final request body. Only JSON request data is supported.
 				if len(s.Properties) > 0 || s.Example != nil {
-					requestName := constructRequestName(requestResponsePrefix, path)
+					requestName := hyphenatedToTitleCase(operationID) + "Request"
 					doc.Components.Schemas[requestName] = s
 					op.RequestBody = &OASRequestBody{
+						Required: true,
 						Content: OASContent{
 							"application/json": &OASMediaTypeObject{
 								Schema: &OASSchema{Ref: fmt.Sprintf("#/components/schemas/%s", requestName)},
@@ -473,6 +475,41 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 							}
 						}
 					}
+
+					responseSchema := &OASSchema{
+						Type:       "object",
+						Properties: make(map[string]*OASSchema),
+					}
+
+					for name, field := range resp.Fields {
+						openapiField := convertType(field.Type)
+						p := OASSchema{
+							Type:         openapiField.baseType,
+							Description:  cleanString(field.Description),
+							Format:       openapiField.format,
+							Pattern:      openapiField.pattern,
+							Enum:         field.AllowedValues,
+							Default:      field.Default,
+							Deprecated:   field.Deprecated,
+							DisplayAttrs: withoutOperationHints(field.DisplayAttrs),
+						}
+						if openapiField.baseType == "array" {
+							p.Items = &OASSchema{
+								Type: openapiField.items,
+							}
+						}
+						responseSchema.Properties[name] = &p
+					}
+
+					if len(resp.Fields) != 0 {
+						responseName := hyphenatedToTitleCase(operationID) + "Response"
+						doc.Components.Schemas[responseName] = responseSchema
+						content = OASContent{
+							"application/json": &OASMediaTypeObject{
+								Schema: &OASSchema{Ref: fmt.Sprintf("#/components/schemas/%s", responseName)},
+							},
+						}
+					}
 				}
 
 				op.Responses[code] = &OASResponse{
@@ -495,30 +532,6 @@ func documentPath(p *Path, specialPaths *logical.Paths, requestResponsePrefix st
 	}
 
 	return nil
-}
-
-// constructRequestName joins the given prefix with the path elements into a
-// CamelCaseRequest string.
-//
-// For example, prefix="kv" & path=/config/lease/{name} => KvConfigLeaseRequest
-func constructRequestName(requestResponsePrefix string, path string) string {
-	var b strings.Builder
-
-	b.WriteString(strings.Title(requestResponsePrefix))
-
-	// split the path by / _ - separators
-	for _, token := range strings.FieldsFunc(path, func(r rune) bool {
-		return r == '/' || r == '_' || r == '-'
-	}) {
-		// exclude request fields
-		if !strings.ContainsAny(token, "{}") {
-			b.WriteString(strings.Title(token))
-		}
-	}
-
-	b.WriteString("Request")
-
-	return b.String()
 }
 
 // specialPathMatch checks whether the given path matches one of the special
@@ -571,6 +584,117 @@ func specialPathMatch(path string, specialPaths []string) bool {
 	}
 
 	return false
+}
+
+// constructOperationID joins the given inputs into a hyphen-separated
+// lower-case operation id, which is also used as a prefix for request and
+// response names.
+//
+// The OperationPrefix / -Verb / -Suffix found in display attributes will be
+// used, if provided. Otherwise, the function falls back to using the path and
+// the operation.
+//
+// Examples of generated operation identifiers:
+//   - kvv2-write
+//   - kvv2-read
+//   - google-cloud-login
+//   - google-cloud-write-role
+func constructOperationID(
+	path string,
+	pathIndex int,
+	pathAttributes *DisplayAttributes,
+	operation logical.Operation,
+	operationAttributes *DisplayAttributes,
+	defaultPrefix string,
+) string {
+	var (
+		prefix string
+		verb   string
+		suffix string
+	)
+
+	if operationAttributes != nil {
+		prefix = operationAttributes.OperationPrefix
+		verb = operationAttributes.OperationVerb
+		suffix = operationAttributes.OperationSuffix
+	}
+
+	if pathAttributes != nil {
+		if prefix == "" {
+			prefix = pathAttributes.OperationPrefix
+		}
+		if verb == "" {
+			verb = pathAttributes.OperationVerb
+		}
+		if suffix == "" {
+			suffix = pathAttributes.OperationSuffix
+		}
+	}
+
+	// A single suffix string can contain multiple pipe-delimited strings. To
+	// determine the actual suffix, we attempt to match it by the index of the
+	// paths returned from `expandPattern(...)`. For example:
+	//
+	//  pki/
+	//  	Pattern: "keys/generate/(internal|exported|kms)",
+	//      DisplayAttrs: {
+	//          ...
+	//          OperationSuffix: "internal-key|exported-key|kms-key",
+	//      },
+	//
+	//  will expand into three paths and corresponding suffixes:
+	//
+	//      path 0: "keys/generate/internal"  suffix: internal-key
+	//      path 1: "keys/generate/exported"  suffix: exported-key
+	//      path 2: "keys/generate/kms"       suffix: kms-key
+	//
+	pathIndexOutOfRange := false
+
+	if suffixes := strings.Split(suffix, "|"); len(suffixes) > 1 || pathIndex > 0 {
+		// if the index is out of bounds, fall back to the old logic
+		if pathIndex >= len(suffixes) {
+			suffix = ""
+			pathIndexOutOfRange = true
+		} else {
+			suffix = suffixes[pathIndex]
+		}
+	}
+
+	// a helper that hyphenates & lower-cases the slice except the empty elements
+	toLowerHyphenate := func(parts []string) string {
+		filtered := make([]string, 0, len(parts))
+		for _, e := range parts {
+			if e != "" {
+				filtered = append(filtered, e)
+			}
+		}
+		return strings.ToLower(strings.Join(filtered, "-"))
+	}
+
+	// fall back to using the path + operation to construct the operation id
+	var (
+		needPrefix = prefix == "" && verb == ""
+		needVerb   = verb == ""
+		needSuffix = suffix == "" && (verb == "" || pathIndexOutOfRange)
+	)
+
+	if needPrefix {
+		prefix = defaultPrefix
+	}
+
+	if needVerb {
+		if operation == logical.UpdateOperation {
+			verb = "write"
+		} else {
+			verb = string(operation)
+		}
+	}
+
+	if needSuffix {
+		suffix = toLowerHyphenate(nonWordRe.Split(path, -1))
+	}
+
+	return toLowerHyphenate([]string{prefix, verb, suffix})
 }
 
 // expandPattern expands a regex pattern by generating permutations of any optional parameters
@@ -864,6 +988,40 @@ func splitFields(allFields map[string]*FieldSchema, pattern string) (pathFields,
 	return pathFields, bodyFields
 }
 
+// withoutOperationHints returns a copy of the given DisplayAttributes without
+// OperationPrefix / OperationVerb / OperationSuffix since we don't need these
+// fields in the final output.
+func withoutOperationHints(in *DisplayAttributes) *DisplayAttributes {
+	if in == nil {
+		return nil
+	}
+
+	copy := *in
+
+	copy.OperationPrefix = ""
+	copy.OperationVerb = ""
+	copy.OperationSuffix = ""
+
+	// return nil if all fields are empty to avoid empty JSON objects
+	if copy == (DisplayAttributes{}) {
+		return nil
+	}
+
+	return &copy
+}
+
+func hyphenatedToTitleCase(in string) string {
+	var b strings.Builder
+
+	title := cases.Title(language.English, cases.NoLower)
+
+	for _, word := range strings.Split(in, "-") {
+		b.WriteString(title.String(word))
+	}
+
+	return b.String()
+}
+
 // cleanedResponse is identical to logical.Response but with nulls
 // removed from from JSON encoding
 type cleanedResponse struct {
@@ -898,6 +1056,9 @@ func cleanResponse(resp *logical.Response) *cleanedResponse {
 //	postSysToolsRandomUrlbytes_2
 //
 // An optional user-provided suffix ("context") may also be appended.
+//
+// Deprecated: operationID's are now populated using `constructOperationID`.
+// This function is here for backwards compatibility with older plugins.
 func (d *OASDocument) CreateOperationIDs(context string) {
 	opIDCount := make(map[string]int)
 	var paths []string
@@ -924,6 +1085,13 @@ func (d *OASDocument) CreateOperationIDs(context string) {
 			if oasOperation == nil {
 				continue
 			}
+
+			if oasOperation.OperationID != "" {
+				continue
+			}
+
+			// Discard "_mount_path" from any {thing_mount_path} parameters
+			path = strings.Replace(path, "_mount_path", "", 1)
 
 			// Space-split on non-words, title case everything, recombine
 			opID := nonWordRe.ReplaceAllString(strings.ToLower(path), " ")

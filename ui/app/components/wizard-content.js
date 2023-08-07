@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { alias, reads } from '@ember/object/computed';
 import { inject as service } from '@ember/service';
 import Component from '@ember/component';
@@ -63,8 +68,8 @@ export default Component.extend({
   ),
   currentTutorialProgress: computed('tutorialState', function () {
     if (this.tutorialState.includes('init.active')) {
-      let currentStepName = this.tutorialState.split('.')[2];
-      let currentStepNumber = INIT_STEPS.indexOf(currentStepName) + 1;
+      const currentStepName = this.tutorialState.split('.')[2];
+      const currentStepNumber = INIT_STEPS.indexOf(currentStepName) + 1;
       return {
         percentage: (currentStepNumber / INIT_STEPS.length) * 100,
         text: `Step ${currentStepNumber} of ${INIT_STEPS.length}`,
@@ -80,7 +85,7 @@ export default Component.extend({
     'currentTutorialProgress.percentage',
     'wizard.featureList',
     function () {
-      let bar = [];
+      const bar = [];
       if (this.currentTutorialProgress) {
         bar.push({
           style: `width:${this.currentTutorialProgress.percentage}%;`,

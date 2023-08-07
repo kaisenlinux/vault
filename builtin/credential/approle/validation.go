@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package approle
 
 import (
@@ -101,7 +104,7 @@ func verifyCIDRRoleSecretIDSubset(secretIDCIDRs []string, roleBoundCIDRList []st
 	return nil
 }
 
-const maxHmacInputLength = 1024
+const maxHmacInputLength = 4096
 
 // Creates a SHA256 HMAC of the given 'value' using the given 'key' and returns
 // a hex encoded string.

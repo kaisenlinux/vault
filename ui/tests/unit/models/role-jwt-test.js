@@ -1,4 +1,8 @@
-/* eslint-disable qunit/no-conditional-assertions */
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 /* eslint qunit/no-conditional-assertions: "warn" */
 import { module, test } from 'qunit';
 import { setupTest } from 'ember-qunit';
@@ -8,14 +12,14 @@ module('Unit | Model | role-jwt', function (hooks) {
   setupTest(hooks);
 
   test('it exists', function (assert) {
-    let model = this.owner.lookup('service:store').createRecord('role-jwt');
+    const model = this.owner.lookup('service:store').createRecord('role-jwt');
     assert.ok(!!model);
     assert.strictEqual(model.providerName, null, 'no providerName');
     assert.strictEqual(model.providerButtonComponent, null, 'no providerButtonComponent');
   });
 
   test('it computes providerName when known provider url match fails', function (assert) {
-    let model = this.owner.lookup('service:store').createRecord('role-jwt', {
+    const model = this.owner.lookup('service:store').createRecord('role-jwt', {
       authUrl: 'http://example.com',
     });
 

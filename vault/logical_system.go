@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package vault
 
 import (
@@ -10,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"math/rand"
 	"net/http"
 	"path"
 	"path/filepath"
@@ -27,6 +31,7 @@ import (
 	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/go-secure-stdlib/strutil"
 	semver "github.com/hashicorp/go-version"
+	"github.com/hashicorp/vault/helper/experiments"
 	"github.com/hashicorp/vault/helper/hostutil"
 	"github.com/hashicorp/vault/helper/identity"
 	"github.com/hashicorp/vault/helper/logging"
@@ -39,9 +44,10 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/consts"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/helper/pluginutil"
+	"github.com/hashicorp/vault/sdk/helper/roottoken"
 	"github.com/hashicorp/vault/sdk/helper/wrapping"
 	"github.com/hashicorp/vault/sdk/logical"
-	"github.com/hashicorp/vault/sdk/version"
+	"github.com/hashicorp/vault/version"
 	"github.com/mitchellh/mapstructure"
 	"golang.org/x/crypto/sha3"
 )
@@ -113,6 +119,7 @@ func NewSystemBackend(core *Core, logger log.Logger) *SystemBackend {
 				"leases/lookup/*",
 				"storage/raft/snapshot-auto/config/*",
 				"leases",
+				"internal/inspect/*",
 			},
 
 			Unauthenticated: []string{
@@ -144,6 +151,7 @@ func NewSystemBackend(core *Core, logger log.Logger) *SystemBackend {
 				"health",
 				"generate-root/attempt",
 				"generate-root/update",
+				"decode-token",
 				"rekey/init",
 				"rekey/update",
 				"rekey/verify",
@@ -175,6 +183,7 @@ func NewSystemBackend(core *Core, logger log.Logger) *SystemBackend {
 	b.Backend.Paths = append(b.Backend.Paths, b.auditPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.mountPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.authPaths()...)
+	b.Backend.Paths = append(b.Backend.Paths, b.lockedUserPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.leasePaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.policyPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.wrappingPaths()...)
@@ -190,11 +199,12 @@ func NewSystemBackend(core *Core, logger log.Logger) *SystemBackend {
 	b.Backend.Paths = append(b.Backend.Paths, b.quotasPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.rootActivityPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.loginMFAPaths()...)
+	b.Backend.Paths = append(b.Backend.Paths, b.experimentPaths()...)
+	b.Backend.Paths = append(b.Backend.Paths, b.introspectionPaths()...)
 
 	if core.rawEnabled {
 		b.Backend.Paths = append(b.Backend.Paths, b.rawPaths()...)
 	}
-
 	if backend := core.getRaftBackend(); backend != nil {
 		b.Backend.Paths = append(b.Backend.Paths, b.raftStoragePaths()...)
 	}
@@ -915,6 +925,24 @@ func (b *SystemBackend) handleRekeyDeleteRecovery(ctx context.Context, req *logi
 	return b.handleRekeyDelete(ctx, req, data, true)
 }
 
+func (b *SystemBackend) handleGenerateRootDecodeTokenUpdate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	encodedToken := data.Get("encoded_token").(string)
+	otp := data.Get("otp").(string)
+
+	token, err := roottoken.DecodeToken(encodedToken, otp, len(otp))
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate the response
+	resp := &logical.Response{
+		Data: map[string]interface{}{
+			"token": token,
+		},
+	}
+	return resp, nil
+}
+
 func (b *SystemBackend) mountInfo(ctx context.Context, entry *MountEntry) map[string]interface{} {
 	info := map[string]interface{}{
 		"type":                    entry.Type,
@@ -956,6 +984,15 @@ func (b *SystemBackend) mountInfo(ctx context.Context, entry *MountEntry) map[st
 	}
 	if entry.Table == credentialTableType {
 		entryConfig["token_type"] = entry.Config.TokenType.String()
+	}
+	if entry.Config.UserLockoutConfig != nil {
+		userLockoutConfig := map[string]interface{}{
+			"user_lockout_counter_reset_duration": int64(entry.Config.UserLockoutConfig.LockoutCounterReset.Seconds()),
+			"user_lockout_threshold":              entry.Config.UserLockoutConfig.LockoutThreshold,
+			"user_lockout_duration":               int64(entry.Config.UserLockoutConfig.LockoutDuration.Seconds()),
+			"user_lockout_disable":                entry.Config.UserLockoutConfig.DisableLockout,
+		}
+		entryConfig["user_lockout_config"] = userLockoutConfig
 	}
 
 	// Add deprecation status only if it exists
@@ -1619,6 +1656,13 @@ func (b *SystemBackend) handleTuneReadCommon(ctx context.Context, path string) (
 		resp.Data["allowed_managed_keys"] = rawVal.([]string)
 	}
 
+	if mountEntry.Config.UserLockoutConfig != nil {
+		resp.Data["user_lockout_counter_reset_duration"] = int64(mountEntry.Config.UserLockoutConfig.LockoutCounterReset.Seconds())
+		resp.Data["user_lockout_threshold"] = mountEntry.Config.UserLockoutConfig.LockoutThreshold
+		resp.Data["user_lockout_duration"] = int64(mountEntry.Config.UserLockoutConfig.LockoutDuration.Seconds())
+		resp.Data["user_lockout_disable"] = mountEntry.Config.UserLockoutConfig.DisableLockout
+	}
+
 	if len(mountEntry.Options) > 0 {
 		resp.Data["options"] = mountEntry.Options
 	}
@@ -1738,6 +1782,111 @@ func (b *SystemBackend) handleTuneWriteCommon(ctx context.Context, path string, 
 		}
 	}
 
+	// user-lockout config
+	{
+		var apiuserLockoutConfig APIUserLockoutConfig
+
+		userLockoutConfigMap := data.Get("user_lockout_config").(map[string]interface{})
+		var err error
+		if userLockoutConfigMap != nil && len(userLockoutConfigMap) != 0 {
+			err := mapstructure.Decode(userLockoutConfigMap, &apiuserLockoutConfig)
+			if err != nil {
+				return logical.ErrorResponse(
+						"unable to convert given user lockout config information"),
+					logical.ErrInvalidRequest
+			}
+
+			// Supported auth methods for user lockout configuration: ldap, approle, userpass
+			switch strings.ToLower(mountEntry.Type) {
+			case "ldap", "approle", "userpass":
+			default:
+				return logical.ErrorResponse("tuning of user lockout configuration for auth type %q not allowed", mountEntry.Type),
+					logical.ErrInvalidRequest
+
+			}
+		}
+
+		if len(userLockoutConfigMap) > 0 && mountEntry.Config.UserLockoutConfig == nil {
+			mountEntry.Config.UserLockoutConfig = &UserLockoutConfig{}
+		}
+
+		var oldUserLockoutThreshold uint64
+		var newUserLockoutDuration, oldUserLockoutDuration time.Duration
+		var newUserLockoutCounterReset, oldUserLockoutCounterReset time.Duration
+		var oldUserLockoutDisable bool
+
+		if apiuserLockoutConfig.LockoutThreshold != "" {
+			userLockoutThreshold, err := strconv.ParseUint(apiuserLockoutConfig.LockoutThreshold, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse user lockout threshold: %w", err)
+			}
+			oldUserLockoutThreshold = mountEntry.Config.UserLockoutConfig.LockoutThreshold
+			mountEntry.Config.UserLockoutConfig.LockoutThreshold = userLockoutThreshold
+		}
+
+		if apiuserLockoutConfig.LockoutDuration != "" {
+			oldUserLockoutDuration = mountEntry.Config.UserLockoutConfig.LockoutDuration
+			switch apiuserLockoutConfig.LockoutDuration {
+			case "":
+				newUserLockoutDuration = oldUserLockoutDuration
+			case "system":
+				newUserLockoutDuration = time.Duration(0)
+			default:
+				tmpUserLockoutDuration, err := parseutil.ParseDurationSecond(apiuserLockoutConfig.LockoutDuration)
+				if err != nil {
+					return handleError(err)
+				}
+				newUserLockoutDuration = tmpUserLockoutDuration
+
+			}
+			mountEntry.Config.UserLockoutConfig.LockoutDuration = newUserLockoutDuration
+		}
+
+		if apiuserLockoutConfig.LockoutCounterResetDuration != "" {
+			oldUserLockoutCounterReset = mountEntry.Config.UserLockoutConfig.LockoutCounterReset
+			switch apiuserLockoutConfig.LockoutCounterResetDuration {
+			case "":
+				newUserLockoutCounterReset = oldUserLockoutCounterReset
+			case "system":
+				newUserLockoutCounterReset = time.Duration(0)
+			default:
+				tmpUserLockoutCounterReset, err := parseutil.ParseDurationSecond(apiuserLockoutConfig.LockoutCounterResetDuration)
+				if err != nil {
+					return handleError(err)
+				}
+				newUserLockoutCounterReset = tmpUserLockoutCounterReset
+			}
+
+			mountEntry.Config.UserLockoutConfig.LockoutCounterReset = newUserLockoutCounterReset
+		}
+
+		if apiuserLockoutConfig.DisableLockout != nil {
+			oldUserLockoutDisable = mountEntry.Config.UserLockoutConfig.DisableLockout
+			userLockoutDisable := apiuserLockoutConfig.DisableLockout
+			mountEntry.Config.UserLockoutConfig.DisableLockout = *userLockoutDisable
+		}
+
+		// Update the mount table
+		if len(userLockoutConfigMap) > 0 {
+			switch {
+			case strings.HasPrefix(path, "auth/"):
+				err = b.Core.persistAuth(ctx, b.Core.auth, &mountEntry.Local)
+			default:
+				err = b.Core.persistMounts(ctx, b.Core.mounts, &mountEntry.Local)
+			}
+			if err != nil {
+				mountEntry.Config.UserLockoutConfig.LockoutCounterReset = oldUserLockoutCounterReset
+				mountEntry.Config.UserLockoutConfig.LockoutThreshold = oldUserLockoutThreshold
+				mountEntry.Config.UserLockoutConfig.LockoutDuration = oldUserLockoutDuration
+				mountEntry.Config.UserLockoutConfig.DisableLockout = oldUserLockoutDisable
+				return handleError(err)
+			}
+			if b.Core.logger.IsInfo() {
+				b.Core.logger.Info("tuning of user_lockout_config successful", "path", path)
+			}
+		}
+
+	}
 	if rawVal, ok := data.GetOk("description"); ok {
 		description := rawVal.(string)
 
@@ -2080,6 +2229,51 @@ func (b *SystemBackend) handleTuneWriteCommon(ctx context.Context, path string, 
 	}
 
 	return resp, nil
+}
+
+// handleLockedUsersMetricQuery reports the locked user count metrics for this namespace and all child namespaces
+// if mount_accessor in request, returns the locked user metrics for that mount accessor for namespace in ctx
+func (b *SystemBackend) handleLockedUsersMetricQuery(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	var mountAccessor string
+	if mountAccessorRaw, ok := d.GetOk("mount_accessor"); ok {
+		mountAccessor = mountAccessorRaw.(string)
+	}
+
+	results, err := b.handleLockedUsersQuery(ctx, mountAccessor)
+	if err != nil {
+		return nil, err
+	}
+	if results == nil {
+		return logical.RespondWithStatusCode(nil, req, http.StatusNoContent)
+	}
+
+	return &logical.Response{
+		Data: results,
+	}, nil
+}
+
+// handleUnlockUser is used to unlock user with given mount_accessor and alias_identifier if locked
+func (b *SystemBackend) handleUnlockUser(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	mountAccessor := data.Get("mount_accessor").(string)
+	if mountAccessor == "" {
+		return logical.ErrorResponse(
+				"missing mount_accessor"),
+			logical.ErrInvalidRequest
+	}
+
+	aliasName := data.Get("alias_identifier").(string)
+	if aliasName == "" {
+		return logical.ErrorResponse(
+				"missing alias_identifier"),
+			logical.ErrInvalidRequest
+	}
+
+	if err := unlockUser(ctx, b.Core, mountAccessor, aliasName); err != nil {
+		b.Backend.Logger().Error("unlock user failed", "mount accessor", mountAccessor, "alias identifier", aliasName, "error", err)
+		return handleError(err)
+	}
+
+	return nil, nil
 }
 
 // handleLease is use to view the metadata for a given LeaseID
@@ -2846,28 +3040,44 @@ func (*SystemBackend) handlePoliciesPasswordSet(ctx context.Context, req *logica
 			fmt.Sprintf("passwords must be between %d and %d characters", minPasswordLength, maxPasswordLength))
 	}
 
-	// Generate some passwords to ensure that we're confident that the policy isn't impossible
-	timeout := 1 * time.Second
-	genCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	// Attempt to construct a test password from the rules to ensure that the policy isn't impossible
+	var testPassword []rune
 
-	attempts := 10
-	failed := 0
-	for i := 0; i < attempts; i++ {
-		_, err = policy.Generate(genCtx, nil)
-		if err != nil {
-			failed++
+	for _, rule := range policy.Rules {
+		charsetRule, ok := rule.(random.CharsetRule)
+		if !ok {
+			return nil, logical.CodedError(http.StatusBadRequest, fmt.Sprintf("unexpected rule type %T", charsetRule))
+		}
+
+		for j := 0; j < charsetRule.MinLength(); j++ {
+			charIndex := rand.Intn(len(charsetRule.Chars()))
+			testPassword = append(testPassword, charsetRule.Chars()[charIndex])
 		}
 	}
 
-	if failed == attempts {
-		return nil, logical.CodedError(http.StatusBadRequest,
-			fmt.Sprintf("unable to generate password from provided policy in %s: are the rules impossible?", timeout))
+	for i := len(testPassword); i < policy.Length; i++ {
+		for _, rule := range policy.Rules {
+			if len(testPassword) >= policy.Length {
+				break
+			}
+			charsetRule, ok := rule.(random.CharsetRule)
+			if !ok {
+				return nil, logical.CodedError(http.StatusBadRequest, fmt.Sprintf("unexpected rule type %T", charsetRule))
+			}
+
+			charIndex := rand.Intn(len(charsetRule.Chars()))
+			testPassword = append(testPassword, charsetRule.Chars()[charIndex])
+		}
 	}
 
-	if failed > 0 {
-		return nil, logical.CodedError(http.StatusBadRequest,
-			fmt.Sprintf("failed to generate passwords %d times out of %d attempts in %s - is the policy too restrictive?", failed, attempts, timeout))
+	rand.Shuffle(policy.Length, func(i, j int) {
+		testPassword[i], testPassword[j] = testPassword[j], testPassword[i]
+	})
+
+	for _, rule := range policy.Rules {
+		if !rule.Pass(testPassword) {
+			return nil, logical.CodedError(http.StatusBadRequest, "unable to construct test password from provided policy: are the rules impossible?")
+		}
 	}
 
 	cfg := passwordPolicyConfig{
@@ -4185,6 +4395,25 @@ func (b *SystemBackend) pathInternalCountersEntities(ctx context.Context, req *l
 	return resp, nil
 }
 
+func (b *SystemBackend) pathInternalInspectRouter(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
+	b.Core.introspectionEnabledLock.Lock()
+	defer b.Core.introspectionEnabledLock.Unlock()
+	if b.Core.introspectionEnabled {
+		tag := d.Get("tag").(string)
+		inspectableRouter, err := b.Core.router.GetRecords(tag)
+		if err != nil {
+			return nil, err
+		}
+		resp := &logical.Response{
+			Data: map[string]interface{}{
+				tag: inspectableRouter,
+			},
+		}
+		return resp, nil
+	}
+	return logical.ErrorResponse(ErrIntrospectionNotEnabled.Error()), nil
+}
+
 func (b *SystemBackend) pathInternalUIResultantACL(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	if req.ClientToken == "" {
 		// 204 -- no ACL
@@ -4306,10 +4535,20 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 
 	context := d.Get("context").(string)
 
-	// Set up target document and convert to map[string]interface{} which is what will
-	// be received from plugin backends.
-	doc := framework.NewOASDocument()
+	// Set up target document
+	doc := framework.NewOASDocument(version.Version)
 
+	// Generic mount paths will primarily be used for code generation purposes.
+	// This will result in parameterized mount paths being returned instead of
+	// hardcoded actual paths. For example /auth/my-auth-method/login would be
+	// replaced with /auth/{my_auth_method_mount_path}/login.
+	//
+	// Note that for this to actually be useful, you have to be using it with
+	// a Vault instance in which you have mounted one of each secrets engine
+	// and auth method of types you are interested in, at paths which identify
+	// their type, and for the KV secrets engine you will probably want to
+	// mount separate kv-v1 and kv-v2 mounts to include the documentation for
+	// each of those APIs.
 	genericMountPaths, _ := d.Get("generic_mount_paths").(bool)
 
 	procMountGroup := func(group, mountPrefix string) error {
@@ -4329,7 +4568,7 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 			req := &logical.Request{
 				Operation: logical.HelpOperation,
 				Storage:   req.Storage,
-				Data:      map[string]interface{}{"requestResponsePrefix": pluginType, "genericMountPaths": genericMountPaths},
+				Data:      map[string]interface{}{"requestResponsePrefix": pluginType},
 			}
 
 			resp, err := backend.HandleRequest(ctx, req)
@@ -4367,6 +4606,19 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 				tag = "identity"
 			}
 
+			// When set to the empty string, mountPathParameterName means not to use a parameter at all;
+			// the one variable combines both boolean, and value-to-use-if-true semantics.
+			mountPathParameterName := ""
+			if genericMountPaths {
+				isSingletonMount := (group == "auth" && pluginType == "token") ||
+					(group == "secret" &&
+						(pluginType == "system" || pluginType == "identity" || pluginType == "cubbyhole"))
+
+				if !isSingletonMount {
+					mountPathParameterName = strings.TrimRight(strings.ReplaceAll(mount, "-", "_"), "/") + "_mount_path"
+				}
+			}
+
 			// Merge backend paths with existing document
 			for path, obj := range backendDoc.Paths {
 				path := strings.TrimPrefix(path, "/")
@@ -4383,12 +4635,24 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 					}
 				}
 
-				if genericMountPaths && mount != "sys/" && mount != "identity/" {
-					s := fmt.Sprintf("/%s{mountPath}/%s", mountPrefix, path)
-					doc.Paths[s] = obj
-				} else {
-					doc.Paths["/"+mountPrefix+mount+path] = obj
+				mountForOpenAPI := mount
+
+				if mountPathParameterName != "" {
+					mountForOpenAPI = "{" + mountPathParameterName + "}/"
+
+					obj.Parameters = append(obj.Parameters, framework.OASParameter{
+						Name:        mountPathParameterName,
+						Description: "Path that the backend was mounted at",
+						In:          "path",
+						Schema: &framework.OASSchema{
+							Type:    "string",
+							Default: strings.TrimRight(mount, "/"),
+						},
+						Required: true,
+					})
 				}
+
+				doc.Paths["/"+mountPrefix+mountForOpenAPI+path] = obj
 			}
 
 			// Merge backend schema components
@@ -4425,22 +4689,23 @@ func (b *SystemBackend) pathInternalOpenAPI(ctx context.Context, req *logical.Re
 }
 
 type SealStatusResponse struct {
-	Type              string `json:"type"`
-	Initialized       bool   `json:"initialized"`
-	Sealed            bool   `json:"sealed"`
-	T                 int    `json:"t"`
-	N                 int    `json:"n"`
-	Progress          int    `json:"progress"`
-	Nonce             string `json:"nonce"`
-	Version           string `json:"version"`
-	BuildDate         string `json:"build_date"`
-	Migration         bool   `json:"migration"`
-	ClusterName       string `json:"cluster_name,omitempty"`
-	ClusterID         string `json:"cluster_id,omitempty"`
-	RecoverySeal      bool   `json:"recovery_seal"`
-	StorageType       string `json:"storage_type,omitempty"`
-	HCPLinkStatus     string `json:"hcp_link_status,omitempty"`
-	HCPLinkResourceID string `json:"hcp_link_resource_ID,omitempty"`
+	Type              string   `json:"type"`
+	Initialized       bool     `json:"initialized"`
+	Sealed            bool     `json:"sealed"`
+	T                 int      `json:"t"`
+	N                 int      `json:"n"`
+	Progress          int      `json:"progress"`
+	Nonce             string   `json:"nonce"`
+	Version           string   `json:"version"`
+	BuildDate         string   `json:"build_date"`
+	Migration         bool     `json:"migration"`
+	ClusterName       string   `json:"cluster_name,omitempty"`
+	ClusterID         string   `json:"cluster_id,omitempty"`
+	RecoverySeal      bool     `json:"recovery_seal"`
+	StorageType       string   `json:"storage_type,omitempty"`
+	HCPLinkStatus     string   `json:"hcp_link_status,omitempty"`
+	HCPLinkResourceID string   `json:"hcp_link_resource_ID,omitempty"`
+	Warnings          []string `json:"warnings,omitempty"`
 }
 
 func (core *Core) GetSealStatus(ctx context.Context) (*SealStatusResponse, error) {
@@ -4878,6 +5143,24 @@ func (b *SystemBackend) handleLoggersByNameDelete(ctx context.Context, req *logi
 	return nil, nil
 }
 
+// handleReadExperiments returns the available and enabled experiments on this node.
+// Each node within a cluster could have different values for each, but it's not
+// recommended.
+func (b *SystemBackend) handleReadExperiments(ctx context.Context, _ *logical.Request, _ *framework.FieldData) (*logical.Response, error) {
+	enabled := b.Core.experiments
+	if len(enabled) == 0 {
+		// Return empty slice instead of nil, so the JSON shows [] instead of null
+		enabled = []string{}
+	}
+
+	return &logical.Response{
+		Data: map[string]interface{}{
+			"available": experiments.ValidExperiments(),
+			"enabled":   enabled,
+		},
+	}, nil
+}
+
 func sanitizePath(path string) string {
 	if !strings.HasSuffix(path, "/") {
 		path += "/"
@@ -4936,6 +5219,17 @@ This path responds to the following HTTP methods.
     DELETE /
         Clears the CORS configuration and disables acceptance of CORS requests.
 		`,
+	},
+	"config/group-policy-application": {
+		"Configures how policies in groups should be applied, accepting 'within_namespace_hierarchy' (default) and 'any'," +
+			"which will allow policies to grant permissions in groups outside of those sharing a namespace hierarchy.",
+		`
+This path responds to the following HTTP methods.
+    GET /
+        Returns the current group policy application mode.
+    POST /
+        Sets the current group_policy_application_mode to either 'within_namespace_hierarchy' or 'any'.
+        `,
 	},
 	"config/ui/headers": {
 		"Configures response headers that should be returned from the UI.",
@@ -5116,6 +5410,10 @@ in the plugin catalog.`,
 		`The options to pass into the backend. Should be a json object with string keys and values.`,
 	},
 
+	"tune_user_lockout_config": {
+		`The user lockout configuration to pass into the backend. Should be a json object with string keys and values.`,
+	},
+
 	"remount": {
 		"Move the mount point of an already-mounted backend, within or across namespaces",
 		`
@@ -5145,6 +5443,35 @@ the auth path.`,
 		"Tune backend configuration parameters for this mount.",
 		`Read and write the 'default-lease-ttl' and 'max-lease-ttl' values of
 the mount.`,
+	},
+
+	"unlock_user": {
+		"Unlock the locked user with given mount_accessor and alias_identifier.",
+		`
+This path responds to the following HTTP methods.
+    POST sys/locked-users/:mount_accessor/unlock/:alias_identifier
+		Unlocks the user with given mount_accessor and alias_identifier
+		if locked.`,
+	},
+
+	"mount_accessor": {
+		"MountAccessor is the identifier of the mount entry to which the user belongs",
+		"",
+	},
+
+	"locked_users": {
+		"Report the locked user count metrics",
+		`
+This path responds to the following HTTP methods.
+    GET sys/locked-users
+	Report the locked user count metrics, for current namespace and all child namespaces.`,
+	},
+
+	"alias_identifier": {
+		`It is the name of the alias (user). For example, if the alias belongs to userpass backend, 
+	   the name should be a valid username within userpass auth method. If the alias belongs
+	    to an approle auth method, the name should be a valid RoleID`,
+		"",
 	},
 
 	"renew": {
@@ -5656,6 +5983,14 @@ This path responds to the following HTTP methods.
 		"Count of active entities in this Vault cluster.",
 		"Count of active entities in this Vault cluster.",
 	},
+	"internal-inspect-router": {
+		"Information on the entries in each of the trees in the router. Inspectable trees are uuid, accessor, storage, and root.",
+		`
+This path responds to the following HTTP methods.
+		GET /
+			Returns a list of entries in specified table
+		`,
+	},
 	"host-info": {
 		"Information about the host instance that this Vault server is running on.",
 		`Information about the host instance that this Vault server is running on.
@@ -5693,6 +6028,14 @@ This path responds to the following HTTP methods.
 
     LIST /
         Returns a list historical version changes sorted by installation time in ascending order.
+		`,
+	},
+	"experiments": {
+		"Returns information about Vault's experimental features. Should NOT be used in production.",
+		`
+This path responds to the following HTTP methods.
+		GET /
+			Returns the available and enabled experiments.
 		`,
 	},
 }

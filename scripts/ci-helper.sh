@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) HashiCorp, Inc.
+# SPDX-License-Identifier: MPL-2.0
+
 
 # The ci-helper is used to determine build metadata, build Vault binaries,
 # package those binaries into artifacts, and execute tests with those artifacts.
@@ -38,7 +41,7 @@ function version_base() {
     return
   fi
 
-  : "${VERSION_FILE:=$(repo_root)/sdk/version/version_base.go}"
+  : "${VERSION_FILE:=$(repo_root)/version/version_base.go}"
   awk '$1 == "Version" && $2 == "=" { gsub(/"/, "", $3); print $3 }' < "$VERSION_FILE"
 }
 
@@ -66,7 +69,7 @@ function version_pre() {
     return
   fi
 
-  : "${VERSION_FILE:=$(repo_root)/sdk/version/version_base.go}"
+  : "${VERSION_FILE:=$(repo_root)/version/version_base.go}"
   awk '$1 == "VersionPrerelease" && $2 == "=" { gsub(/"/, "", $3); print $3 }' < "$VERSION_FILE"
 }
 
@@ -79,7 +82,7 @@ function version_metadata() {
     return
   fi
 
-  : "${VERSION_FILE:=$(repo_root)/sdk/version/version_base.go}"
+  : "${VERSION_FILE:=$(repo_root)/version/version_base.go}"
   awk '$1 == "VersionMetadata" && $2 == "=" { gsub(/"/, "", $3); print $3 }' < "$VERSION_FILE"
 }
 
@@ -129,9 +132,9 @@ function build_ui() {
   mkdir -p http/web_ui
   popd
   pushd "$repo_root/ui"
-  yarn install --ignore-optional
+  yarn install
   npm rebuild node-sass
-  yarn --verbose run build
+  yarn run build
   popd
 }
 
@@ -151,28 +154,28 @@ function build() {
   prerelease=$(version_pre)
   build_date=$(build_date)
   : "${GO_TAGS:=""}"
-  : "${KEEP_SYMBOLS:=""}"
+  : "${REMOVE_SYMBOLS:=""}"
 
   # Build our ldflags
   msg="--> Building Vault v$version, revision $revision, built $build_date"
 
-  # Strip the symbol and dwarf information by default
-  if [ -n "$KEEP_SYMBOLS" ]; then
-    ldflags=""
-  else
+  # Keep the symbol and dwarf information by default
+  if [ -n "$REMOVE_SYMBOLS" ]; then
     ldflags="-s -w "
+  else
+    ldflags=""
   fi
 
-  ldflags="${ldflags}-X github.com/hashicorp/vault/sdk/version.Version=$version -X github.com/hashicorp/vault/sdk/version.GitCommit=$revision -X github.com/hashicorp/vault/sdk/version.BuildDate=$build_date"
+  ldflags="${ldflags}-X github.com/hashicorp/vault/version.Version=$version -X github.com/hashicorp/vault/version.GitCommit=$revision -X github.com/hashicorp/vault/version.BuildDate=$build_date"
 
   if [ -n "$prerelease" ]; then
     msg="${msg}, prerelease ${prerelease}"
-    ldflags="${ldflags} -X github.com/hashicorp/vault/sdk/version.VersionPrerelease=$prerelease"
+    ldflags="${ldflags} -X github.com/hashicorp/vault/version.VersionPrerelease=$prerelease"
   fi
 
   if [ -n "$metadata" ]; then
     msg="${msg}, metadata ${metadata}"
-    ldflags="${ldflags} -X github.com/hashicorp/vault/sdk/version.VersionMetadata=$metadata"
+    ldflags="${ldflags} -X github.com/hashicorp/vault/version.VersionMetadata=$metadata"
   fi
 
   # Build vault

@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import { alias } from '@ember/object/computed';
 import Component from '@ember/component';
@@ -21,10 +26,10 @@ export default Component.extend({
   }),
 
   namespaceDisplay: computed('normalizedNamespace', 'showLastSegment', function () {
-    let ns = this.normalizedNamespace;
+    const ns = this.normalizedNamespace;
     if (!ns) return 'root';
-    let showLastSegment = this.showLastSegment;
-    let parts = ns?.split('/');
+    const showLastSegment = this.showLastSegment;
+    const parts = ns?.split('/');
     return showLastSegment ? parts[parts.length - 1] : ns;
   }),
 
@@ -33,7 +38,7 @@ export default Component.extend({
   }),
 
   get namespaceLink() {
-    let origin =
+    const origin =
       window.location.protocol +
       '//' +
       window.location.hostname +

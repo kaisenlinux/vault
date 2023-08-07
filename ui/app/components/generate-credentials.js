@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) HashiCorp, Inc.
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 import { inject as service } from '@ember/service';
 import { computed, set } from '@ember/object';
 import Component from '@ember/component';
@@ -58,7 +63,9 @@ export default Component.extend({
   },
 
   willDestroy() {
-    this.model.unloadRecord();
+    if (!this.model.isDestroyed && !this.model.isDestroying) {
+      this.model.unloadRecord();
+    }
     this._super(...arguments);
   },
 
@@ -86,7 +93,7 @@ export default Component.extend({
 
   actions: {
     create() {
-      let model = this.model;
+      const model = this.model;
       this.set('loading', true);
       this.model.save().finally(() => {
         model.set('hasGenerated', true);

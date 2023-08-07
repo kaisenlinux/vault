@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package pki
 
 import (
@@ -13,15 +16,15 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/hashicorp/vault/sdk/helper/errutil"
-
-	"golang.org/x/crypto/ocsp"
-
+	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
+	"github.com/hashicorp/vault/sdk/helper/errutil"
 	"github.com/hashicorp/vault/sdk/logical"
+	"golang.org/x/crypto/ocsp"
 )
 
 const (
@@ -67,8 +70,33 @@ var (
 )
 
 func buildPathOcspGet(b *backend) *framework.Path {
+	pattern := "ocsp/" + framework.MatchAllRegex(ocspReqParam)
+
+	displayAttrs := &framework.DisplayAttributes{
+		OperationPrefix: operationPrefixPKI,
+		OperationVerb:   "query",
+		OperationSuffix: "ocsp-with-get-req",
+	}
+
+	return buildOcspGetWithPath(b, pattern, displayAttrs)
+}
+
+func buildPathUnifiedOcspGet(b *backend) *framework.Path {
+	pattern := "unified-ocsp/" + framework.MatchAllRegex(ocspReqParam)
+
+	displayAttrs := &framework.DisplayAttributes{
+		OperationPrefix: operationPrefixPKI,
+		OperationVerb:   "query",
+		OperationSuffix: "unified-ocsp-with-get-req",
+	}
+
+	return buildOcspGetWithPath(b, pattern, displayAttrs)
+}
+
+func buildOcspGetWithPath(b *backend, pattern string, displayAttrs *framework.DisplayAttributes) *framework.Path {
 	return &framework.Path{
-		Pattern: "ocsp/" + framework.MatchAllRegex(ocspReqParam),
+		Pattern:      pattern,
+		DisplayAttrs: displayAttrs,
 		Fields: map[string]*framework.FieldSchema{
 			ocspReqParam: {
 				Type:        framework.TypeString,
@@ -87,8 +115,33 @@ func buildPathOcspGet(b *backend) *framework.Path {
 }
 
 func buildPathOcspPost(b *backend) *framework.Path {
+	pattern := "ocsp"
+
+	displayAttrs := &framework.DisplayAttributes{
+		OperationPrefix: operationPrefixPKI,
+		OperationVerb:   "query",
+		OperationSuffix: "ocsp",
+	}
+
+	return buildOcspPostWithPath(b, pattern, displayAttrs)
+}
+
+func buildPathUnifiedOcspPost(b *backend) *framework.Path {
+	pattern := "unified-ocsp"
+
+	displayAttrs := &framework.DisplayAttributes{
+		OperationPrefix: operationPrefixPKI,
+		OperationVerb:   "query",
+		OperationSuffix: "unified-ocsp",
+	}
+
+	return buildOcspPostWithPath(b, pattern, displayAttrs)
+}
+
+func buildOcspPostWithPath(b *backend, pattern string, displayAttrs *framework.DisplayAttributes) *framework.Path {
 	return &framework.Path{
-		Pattern: "ocsp",
+		Pattern:      pattern,
+		DisplayAttrs: displayAttrs,
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.UpdateOperation: &framework.PathOperation{
 				Callback: b.ocspHandler,
@@ -103,7 +156,7 @@ func buildPathOcspPost(b *backend) *framework.Path {
 func (b *backend) ocspHandler(ctx context.Context, request *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	sc := b.makeStorageContext(ctx, request.Storage)
 	cfg, err := b.crlBuilder.getConfigWithUpdate(sc)
-	if err != nil || cfg.OcspDisable {
+	if err != nil || cfg.OcspDisable || (isUnifiedOcspPath(request) && !cfg.UnifiedCRL) {
 		return OcspUnauthorizedResponse, nil
 	}
 
@@ -117,7 +170,9 @@ func (b *backend) ocspHandler(ctx context.Context, request *logical.Request, dat
 		return OcspMalformedResponse, nil
 	}
 
-	ocspStatus, err := getOcspStatus(sc, request, ocspReq)
+	useUnifiedStorage := canUseUnifiedStorage(request, cfg)
+
+	ocspStatus, err := getOcspStatus(sc, ocspReq, useUnifiedStorage)
 	if err != nil {
 		return logAndReturnInternalError(b, err), nil
 	}
@@ -152,6 +207,20 @@ func (b *backend) ocspHandler(ctx context.Context, request *logical.Request, dat
 			logical.HTTPRawBody:     byteResp,
 		},
 	}, nil
+}
+
+func canUseUnifiedStorage(req *logical.Request, cfg *crlConfig) bool {
+	if isUnifiedOcspPath(req) {
+		return true
+	}
+
+	// We are operating on the existing /pki/ocsp path, both of these fields need to be enabled
+	// for us to use the unified path.
+	return shouldLocalPathsUseUnified(cfg)
+}
+
+func isUnifiedOcspPath(req *logical.Request) bool {
+	return strings.HasPrefix(req.Path, "unified-ocsp")
 }
 
 func generateUnknownResponse(cfg *crlConfig, sc *storageContext, ocspReq *ocsp.Request) *logical.Response {
@@ -252,8 +321,8 @@ func logAndReturnInternalError(b *backend, err error) *logical.Response {
 	return OcspInternalErrorResponse
 }
 
-func getOcspStatus(sc *storageContext, request *logical.Request, ocspReq *ocsp.Request) (*ocspRespInfo, error) {
-	revEntryRaw, err := fetchCertBySerialBigInt(sc.Context, sc.Backend, request, revokedPath, ocspReq.SerialNumber)
+func getOcspStatus(sc *storageContext, ocspReq *ocsp.Request, useUnifiedStorage bool) (*ocspRespInfo, error) {
+	revEntryRaw, err := fetchCertBySerialBigInt(sc, revokedPath, ocspReq.SerialNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +341,18 @@ func getOcspStatus(sc *storageContext, request *logical.Request, ocspReq *ocsp.R
 		info.ocspStatus = ocsp.Revoked
 		info.revocationTimeUTC = &revEntry.RevocationTimeUTC
 		info.issuerID = revEntry.CertificateIssuer // This might be empty if the CRL hasn't been rebuilt
+	} else if useUnifiedStorage {
+		dashSerial := normalizeSerialFromBigInt(ocspReq.SerialNumber)
+		unifiedEntry, err := getUnifiedRevocationBySerial(sc, dashSerial)
+		if err != nil {
+			return nil, err
+		}
+
+		if unifiedEntry != nil {
+			info.ocspStatus = ocsp.Revoked
+			info.revocationTimeUTC = &unifiedEntry.RevocationTimeUTC
+			info.issuerID = unifiedEntry.CertificateIssuer
+		}
 	}
 
 	return &info, nil
@@ -394,7 +475,7 @@ func doesRequestMatchIssuer(parsedBundle *certutil.ParsedCertBundle, req *ocsp.R
 
 func genResponse(cfg *crlConfig, caBundle *certutil.ParsedCertBundle, info *ocspRespInfo, reqHash crypto.Hash, revSigAlg x509.SignatureAlgorithm) ([]byte, error) {
 	curTime := time.Now()
-	duration, err := time.ParseDuration(cfg.OcspExpiry)
+	duration, err := parseutil.ParseDurationSecond(cfg.OcspExpiry)
 	if err != nil {
 		return nil, err
 	}
