@@ -1,6 +1,12 @@
+{{!
+  Copyright (c) HashiCorp, Inc.
+  SPDX-License-Identifier: BUSL-1.1
+~}}
+
 <Hds::SideNav::Portal @ariaLabel="Cluster Navigation Links" data-test-sidebar-nav-panel="Cluster" as |Nav|>
   <Nav.Title data-test-sidebar-nav-heading="Vault">Vault</Nav.Title>
 
+  <Nav.Link @route="vault.cluster.dashboard" @text="Dashboard" data-test-sidebar-nav-link="Dashboard" />
   <Nav.Link
     @route="vault.cluster.secrets"
     @current-when="vault.cluster.secrets vault.cluster.settings.mount-secret-backend vault.cluster.settings.configure-secret-backend"
@@ -84,7 +90,7 @@
     />
   {{/if}}
   {{#if (and (has-permission "clients" routeParams="activity") (not this.cluster.dr.isSecondary))}}
-    <Nav.Link @route="vault.cluster.clients" @text="Client count" data-test-sidebar-nav-link="Client count" />
+    <Nav.Link @route="vault.cluster.clients" @text="Client Count" data-test-sidebar-nav-link="Client Count" />
   {{/if}}
   {{#if
     (and

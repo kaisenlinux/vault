@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package configutil
 
@@ -101,7 +101,7 @@ func ParseConfig(d string) (*SharedConfig, error) {
 
 	if o := list.Filter("seal"); len(o.Items) > 0 {
 		result.found("seal", "Seal")
-		if err := parseKMS(&result.Seals, o, "seal", 3); err != nil {
+		if err := parseKMS(&result.Seals, o, "seal", 5); err != nil {
 			return nil, fmt.Errorf("error parsing 'seal': %w", err)
 		}
 	}
@@ -228,7 +228,12 @@ func (c *SharedConfig) Sanitized() map[string]interface{} {
 			cleanSeal := map[string]interface{}{
 				"type":     s.Type,
 				"disabled": s.Disabled,
+				"name":     s.Name,
 			}
+			if s.Priority > 0 {
+				cleanSeal["priority"] = s.Priority
+			}
+
 			sanitizedSeals = append(sanitizedSeals, cleanSeal)
 		}
 		result["seals"] = sanitizedSeals
@@ -266,6 +271,7 @@ func (c *SharedConfig) Sanitized() map[string]interface{} {
 			"lease_metrics_epsilon":                  c.Telemetry.LeaseMetricsEpsilon,
 			"num_lease_metrics_buckets":              c.Telemetry.NumLeaseMetricsTimeBuckets,
 			"add_lease_metrics_namespace_labels":     c.Telemetry.LeaseMetricsNameSpaceLabels,
+			"add_mount_point_rollback_metrics":       c.Telemetry.RollbackMetricsIncludeMountPoint,
 		}
 		result["telemetry"] = sanitizedTelemetry
 	}

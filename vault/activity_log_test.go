@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package vault
 
@@ -20,19 +20,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
-	"github.com/hashicorp/go-uuid"
-
 	"github.com/axiomhq/hyperloglog"
 	"github.com/go-test/deep"
 	"github.com/golang/protobuf/proto"
+	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/helper/constants"
 	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/helper/timeutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault/activity"
 	"github.com/mitchellh/mapstructure"
+	"github.com/stretchr/testify/require"
 )
 
 // TestActivityLog_Creation calls AddEntityToFragment and verifies that it appears correctly in a.fragment.
@@ -136,7 +134,10 @@ func TestActivityLog_Creation_WrappingTokens(t *testing.T) {
 	}
 
 	id, isTWE := te.CreateClientID()
-	a.HandleTokenUsage(context.Background(), te, id, isTWE)
+	err := a.HandleTokenUsage(context.Background(), te, id, isTWE)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	a.fragmentLock.Lock()
 	if a.fragment != nil {
@@ -153,7 +154,10 @@ func TestActivityLog_Creation_WrappingTokens(t *testing.T) {
 	}
 
 	id, isTWE = teNew.CreateClientID()
-	a.HandleTokenUsage(context.Background(), teNew, id, isTWE)
+	err = a.HandleTokenUsage(context.Background(), teNew, id, isTWE)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	a.fragmentLock.Lock()
 	if a.fragment != nil {
@@ -380,18 +384,24 @@ func TestActivityLog_SaveTokensToStorageDoesNotUpdateTokenCount(t *testing.T) {
 	tokenPath := fmt.Sprintf("%sdirecttokens/%d/0", ActivityLogPrefix, a.GetStartTimestamp())
 	clientPath := fmt.Sprintf("sys/counters/activity/log/entity/%d/0", a.GetStartTimestamp())
 	// Create some entries without entityIDs
-	tokenEntryOne := logical.TokenEntry{NamespaceID: "ns1_id", Policies: []string{"hi"}}
-	entityEntry := logical.TokenEntry{EntityID: "foo", NamespaceID: "ns1_id", Policies: []string{"hi"}}
+	tokenEntryOne := logical.TokenEntry{NamespaceID: namespace.RootNamespaceID, Policies: []string{"hi"}}
+	entityEntry := logical.TokenEntry{EntityID: "foo", NamespaceID: namespace.RootNamespaceID, Policies: []string{"hi"}}
 
 	idNonEntity, isTWE := tokenEntryOne.CreateClientID()
 
 	for i := 0; i < 3; i++ {
-		a.HandleTokenUsage(ctx, &tokenEntryOne, idNonEntity, isTWE)
+		err := a.HandleTokenUsage(ctx, &tokenEntryOne, idNonEntity, isTWE)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	idEntity, isTWE := entityEntry.CreateClientID()
 	for i := 0; i < 2; i++ {
-		a.HandleTokenUsage(ctx, &entityEntry, idEntity, isTWE)
+		err := a.HandleTokenUsage(ctx, &entityEntry, idEntity, isTWE)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	err := a.saveCurrentSegmentToStorage(ctx, false)
 	if err != nil {
@@ -651,24 +661,23 @@ func TestActivityLog_availableLogs(t *testing.T) {
 	}
 }
 
-// TestActivityLog_MultipleFragmentsAndSegments adds 4000 clients to a fragment and saves it and reads it. The test then
-// adds 4000 more clients and calls receivedFragment with 200 more entities. The current segment is saved to storage and
-// read back. The test verifies that there are 5000 clients in the first segment index, then the rest in the second index.
+// TestActivityLog_MultipleFragmentsAndSegments adds 4000 clients to a fragment
+// and saves it and reads it. The test then adds 4000 more clients and calls
+// receivedFragment with 200 more entities. The current segment is saved to
+// storage and read back. The test verifies that there are 5000 clients in the
+// first segment index, then the rest in the second index.
 func TestActivityLog_MultipleFragmentsAndSegments(t *testing.T) {
-	core, _, _ := TestCoreUnsealed(t)
+	core, _, _ := TestCoreUnsealedWithConfig(t, &CoreConfig{
+		ActivityLogConfig: ActivityLogCoreConfig{
+			DisableFragmentWorker: true,
+			DisableTimers:         true,
+		},
+	})
 	a := core.activityLog
 
 	// enabled check is now inside AddClientToFragment
 	a.SetEnable(true)
 	a.SetStartTimestamp(time.Now().Unix()) // set a nonzero segment
-
-	// Stop timers for test purposes
-	close(a.doneCh)
-	defer func() {
-		a.l.Lock()
-		a.doneCh = make(chan struct{}, 1)
-		a.l.Unlock()
-	}()
 
 	startTimestamp := a.GetStartTimestamp()
 	path0 := fmt.Sprintf("sys/counters/activity/log/entity/%d/0", startTimestamp)
@@ -1315,9 +1324,9 @@ func TestActivityLog_loadCurrentClientSegment(t *testing.T) {
 			t.Errorf("bad data loaded. expected: %v, got: %v for path %q", tc.entities.Clients, currentEntities, tc.path)
 		}
 
-		activeClients := core.GetActiveClients()
-		if !ActiveEntitiesEqual(activeClients, tc.entities.Clients) {
-			t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v for path %q", tc.entities.Clients, activeClients, tc.path)
+		activeClients := core.GetActiveClientsList()
+		if err := ActiveEntitiesEqual(activeClients, tc.entities.Clients); err != nil {
+			t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v for path %q: %v", tc.entities.Clients, activeClients, tc.path, err)
 		}
 
 		a.resetEntitiesInMemory(t)
@@ -1410,9 +1419,9 @@ func TestActivityLog_loadPriorEntitySegment(t *testing.T) {
 			t.Fatalf("got error loading data for %q: %v", tc.path, err)
 		}
 
-		activeClients := core.GetActiveClients()
-		if !ActiveEntitiesEqual(activeClients, tc.entities.Clients) {
-			t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v for path %q", tc.entities.Clients, activeClients, tc.path)
+		activeClients := core.GetActiveClientsList()
+		if err := ActiveEntitiesEqual(activeClients, tc.entities.Clients); err != nil {
+			t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v for path %q: %v", tc.entities.Clients, activeClients, tc.path, err)
 		}
 	}
 }
@@ -1636,10 +1645,10 @@ func TestActivityLog_refreshFromStoredLog(t *testing.T) {
 		t.Errorf("bad activity token counts loaded. expected: %v got: %v", expectedTokenCounts, nsCount)
 	}
 
-	activeClients := a.core.GetActiveClients()
-	if !ActiveEntitiesEqual(activeClients, expectedActive.Clients) {
+	activeClients := a.core.GetActiveClientsList()
+	if err := ActiveEntitiesEqual(activeClients, expectedActive.Clients); err != nil {
 		// we expect activeClients to be loaded for the entire month
-		t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v", expectedActive.Clients, activeClients)
+		t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v: %v", expectedActive.Clients, activeClients, err)
 	}
 }
 
@@ -1680,10 +1689,10 @@ func TestActivityLog_refreshFromStoredLogWithBackgroundLoadingCancelled(t *testi
 		t.Errorf("bad activity token counts loaded. expected: %v got: %v", expectedTokenCounts, nsCount)
 	}
 
-	activeClients := a.core.GetActiveClients()
-	if !ActiveEntitiesEqual(activeClients, expected.Clients) {
+	activeClients := a.core.GetActiveClientsList()
+	if err := ActiveEntitiesEqual(activeClients, expected.Clients); err != nil {
 		// we only expect activeClients to be loaded for the newest segment (for the current month)
-		t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v", expected.Clients, activeClients)
+		t.Error(err)
 	}
 }
 
@@ -1727,9 +1736,9 @@ func TestActivityLog_refreshFromStoredLogNoTokens(t *testing.T) {
 		// we expect all segments for the current month to be loaded
 		t.Errorf("bad activity entity logs loaded. expected: %v got: %v", expectedCurrent, currentEntities)
 	}
-	activeClients := a.core.GetActiveClients()
-	if !ActiveEntitiesEqual(activeClients, expectedActive.Clients) {
-		t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v", expectedActive.Clients, activeClients)
+	activeClients := a.core.GetActiveClientsList()
+	if err := ActiveEntitiesEqual(activeClients, expectedActive.Clients); err != nil {
+		t.Error(err)
 	}
 
 	// we expect no tokens
@@ -1762,7 +1771,7 @@ func TestActivityLog_refreshFromStoredLogNoEntities(t *testing.T) {
 	if len(currentEntities.Clients) > 0 {
 		t.Errorf("expected no current entity segment to be loaded. got: %v", currentEntities)
 	}
-	activeClients := a.core.GetActiveClients()
+	activeClients := a.core.GetActiveClientsList()
 	if len(activeClients) > 0 {
 		t.Errorf("expected no active entity segment to be loaded. got: %v", activeClients)
 	}
@@ -1841,10 +1850,10 @@ func TestActivityLog_refreshFromStoredLogPreviousMonth(t *testing.T) {
 		t.Errorf("bad activity token counts loaded. expected: %v got: %v", expectedTokenCounts, nsCount)
 	}
 
-	activeClients := a.core.GetActiveClients()
-	if !ActiveEntitiesEqual(activeClients, expectedActive.Clients) {
+	activeClients := a.core.GetActiveClientsList()
+	if err := ActiveEntitiesEqual(activeClients, expectedActive.Clients); err != nil {
 		// we expect activeClients to be loaded for the entire month
-		t.Errorf("bad data loaded into active entities. expected only set of EntityID from %v in %v", expectedActive.Clients, activeClients)
+		t.Error(err)
 	}
 }
 

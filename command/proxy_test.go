@@ -1,5 +1,5 @@
 // Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: BUSL-1.1
 
 package command
 
@@ -23,6 +23,7 @@ import (
 	credAppRole "github.com/hashicorp/vault/builtin/credential/approle"
 	"github.com/hashicorp/vault/command/agent"
 	proxyConfig "github.com/hashicorp/vault/command/proxy/config"
+	"github.com/hashicorp/vault/helper/testhelpers/minimal"
 	"github.com/hashicorp/vault/helper/useragent"
 	vaulthttp "github.com/hashicorp/vault/http"
 	"github.com/hashicorp/vault/sdk/helper/logging"
@@ -64,7 +65,6 @@ func TestProxy_ExitAfterAuth(t *testing.T) {
 func testProxyExitAfterAuth(t *testing.T, viaFlag bool) {
 	logger := logging.NewVaultLogger(hclog.Trace)
 	coreConfig := &vault.CoreConfig{
-		Logger: logger,
 		CredentialBackends: map[string]logical.Factory{
 			"jwt": vaultjwt.Factory,
 		},
@@ -248,7 +248,6 @@ func TestProxy_AutoAuth_UserAgent(t *testing.T) {
 	logger := logging.NewVaultLogger(hclog.Trace)
 	var h userAgentHandler
 	cluster := vault.NewTestCluster(t, &vault.CoreConfig{
-		Logger: logger,
 		CredentialBackends: map[string]logical.Factory{
 			"approle": credAppRole.Factory,
 		},
@@ -695,7 +694,6 @@ func TestProxy_ApiProxy_Retry(t *testing.T) {
 	var h handler
 	cluster := vault.NewTestCluster(t,
 		&vault.CoreConfig{
-			Logger: logger,
 			CredentialBackends: map[string]logical.Factory{
 				"approle": credAppRole.Factory,
 			},
@@ -843,10 +841,7 @@ vault {
 func TestProxy_Metrics(t *testing.T) {
 	// Start a vault server
 	logger := logging.NewVaultLogger(hclog.Trace)
-	cluster := vault.NewTestCluster(t,
-		&vault.CoreConfig{
-			Logger: logger,
-		},
+	cluster := vault.NewTestCluster(t, nil,
 		&vault.TestClusterOptions{
 			HandlerFunc: vaulthttp.Handler,
 		})
@@ -920,24 +915,7 @@ listener "tcp" {
 
 // TestProxy_QuitAPI Tests the /proxy/v1/quit API that can be enabled for the proxy.
 func TestProxy_QuitAPI(t *testing.T) {
-	logger := logging.NewVaultLogger(hclog.Error)
-	cluster := vault.NewTestCluster(t,
-		&vault.CoreConfig{
-			Logger: logger,
-			CredentialBackends: map[string]logical.Factory{
-				"approle": credAppRole.Factory,
-			},
-			LogicalBackends: map[string]logical.Factory{
-				"kv": logicalKv.Factory,
-			},
-		},
-		&vault.TestClusterOptions{
-			NumCores: 1,
-		})
-	cluster.Start()
-	defer cluster.Cleanup()
-
-	vault.TestWaitActive(t, cluster.Cores[0].Core)
+	cluster := minimal.NewTestSoloCluster(t, nil)
 	serverClient := cluster.Cores[0].Client
 
 	// Unset the environment variable so that proxy picks up the right test
@@ -975,7 +953,7 @@ cache {}
 	configPath := makeTempFile(t, "config.hcl", config)
 	defer os.Remove(configPath)
 
-	_, cmd := testProxyCommand(t, logger)
+	_, cmd := testProxyCommand(t, nil)
 	cmd.startedCh = make(chan struct{})
 
 	wg := &sync.WaitGroup{}
@@ -1193,12 +1171,13 @@ func TestProxy_Config_ReloadTls(t *testing.T) {
 	logger := logging.NewVaultLogger(hclog.Trace)
 	ui, cmd := testProxyCommand(t, logger)
 
+	var output string
+	var code int
 	wg.Add(1)
 	args := []string{"-config", configFile.Name()}
 	go func() {
-		if code := cmd.Run(args); code != 0 {
-			output := ui.ErrorWriter.String() + ui.OutputWriter.String()
-			t.Errorf("got a non-zero exit status: %s", output)
+		if code = cmd.Run(args); code != 0 {
+			output = ui.ErrorWriter.String() + ui.OutputWriter.String()
 		}
 		wg.Done()
 	}()
@@ -1265,6 +1244,9 @@ func TestProxy_Config_ReloadTls(t *testing.T) {
 
 	// Shut down
 	cmd.ShutdownCh <- struct{}{}
-
 	wg.Wait()
+
+	if code != 0 {
+		t.Fatalf("got a non-zero exit status: %d, stdout/stderr: %s", code, output)
+	}
 }

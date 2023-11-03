@@ -1,19 +1,18 @@
 /**
  * Copyright (c) HashiCorp, Inc.
- * SPDX-License-Identifier: MPL-2.0
+ * SPDX-License-Identifier: BUSL-1.1
  */
 
+import Ember from 'ember';
 import { debounce, later } from '@ember/runloop';
 import { inject as service } from '@ember/service';
 import { action } from '@ember/object';
 import { guidFor } from '@ember/object/internals';
 import Component from '@glimmer/component';
 
-// TODO MOVE THESE TO THE ADDON
-import utils from 'vault/lib/key-utils';
-import keys from 'vault/lib/keycodes';
 import { encodePath } from 'vault/utils/path-encoding-helpers';
-import Ember from 'ember';
+import { keyIsFolder, parentKeyForKey } from 'core/utils/key-utils';
+import keys from 'core/utils/key-codes';
 
 /**
  * @module NavigateInput
@@ -94,7 +93,7 @@ export default class NavigateInput extends Component {
     if (mode.startsWith('secrets') && (!val || val === baseKey)) {
       return;
     }
-    if (this.args.filterMatchesKey && !utils.keyIsFolder(val)) {
+    if (this.args.filterMatchesKey && !keyIsFolder(val)) {
       const params = [routeFor('show', mode, this.args.urls), extraParams, this.keyForNav(val)].compact();
       this.transitionToRoute(...params);
     } else {
@@ -126,7 +125,7 @@ export default class NavigateInput extends Component {
 
   // pop to the nearest parentKey or to the root
   onEscape(val) {
-    const key = utils.parentKeyForKey(val) || '';
+    const key = parentKeyForKey(val) || '';
     this.args.filterDidChange(key);
     this.filterUpdated(key);
   }
@@ -150,11 +149,11 @@ export default class NavigateInput extends Component {
     }
     // select the key to nav to, assumed to be a folder
     let key = val ? val.trim() : '';
-    const isFolder = utils.keyIsFolder(key);
+    const isFolder = keyIsFolder(key);
 
     if (!isFolder) {
       // nav to the closest parentKey (or the root)
-      key = utils.parentKeyForKey(val) || '';
+      key = parentKeyForKey(val) || '';
     }
 
     const pageFilter = val.replace(key, '');
@@ -167,7 +166,7 @@ export default class NavigateInput extends Component {
     if (key) {
       args.push(key);
     }
-    if (pageFilter && !utils.keyIsFolder(pageFilter)) {
+    if (pageFilter && !keyIsFolder(pageFilter)) {
       args.push({
         queryParams: {
           page: 1,

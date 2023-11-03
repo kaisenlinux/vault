@@ -1,8 +1,8 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.14.1.orig/Makefile
-+++ vault-1.14.1/Makefile
-@@ -185,15 +185,15 @@ static-assets-dir:
+--- vault-1.15.1.orig/Makefile
++++ vault-1.15.1/Makefile
+@@ -190,15 +190,15 @@ static-assets-dir:
  
  install-ui-dependencies:
  	@echo "--> Installing JavaScript assets"
@@ -21,7 +21,7 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
  
  check-vault-in-path:
  	@VAULT_BIN=$$(command -v vault) || { echo "vault command not found"; exit 1; }; \
-@@ -203,13 +203,13 @@ check-vault-in-path:
+@@ -208,13 +208,13 @@ check-vault-in-path:
  ember-dist: install-ui-dependencies
  	@cd ui && npm rebuild node-sass
  	@echo "--> Building Ember application"

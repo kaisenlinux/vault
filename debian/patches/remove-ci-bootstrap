@@ -1,13 +1,35 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.14.1.orig/Makefile
-+++ vault-1.14.1/Makefile
-@@ -172,7 +172,7 @@ ci-bootstrap: .ci-bootstrap
- 	@touch .ci-bootstrap
+--- vault-1.15.1.orig/Makefile
++++ vault-1.15.1/Makefile
+@@ -166,19 +166,19 @@ prep:
+ 	@if [ -d .git/hooks ]; then cp .hooks/* .git/hooks/; fi
+ 
+ # bootstrap the build by downloading additional tools needed to build
+-ci-bootstrap: .ci-bootstrap
+-.ci-bootstrap:
+-	@for tool in  $(EXTERNAL_TOOLS_CI) ; do \
+-		echo "Installing/Updating $$tool" ; \
+-		GO111MODULE=off $(GO_CMD) get -u $$tool; \
+-	done
+-	go install github.com/bufbuild/buf/cmd/buf@v1.25.0
+-	@touch .ci-bootstrap
++#ci-bootstrap: .ci-bootstrap
++#.ci-bootstrap:
++#	@for tool in  $(EXTERNAL_TOOLS_CI) ; do \
++#		echo "Installing/Updating $$tool" ; \
++#		GO111MODULE=off $(GO_CMD) get -u $$tool; \
++#	done
++#	go install github.com/bufbuild/buf/cmd/buf@v1.25.0
++#	@touch .ci-bootstrap
  
  # bootstrap the build by downloading additional tools that may be used by devs
 -bootstrap: ci-bootstrap
-+bootstrap:
- 	go generate -tags tools tools/tools.go
+-	go generate -tags tools tools/tools.go
+-	go install github.com/bufbuild/buf/cmd/buf@v1.25.0
++#bootstrap: ci-bootstrap
++#	go generate -tags tools tools/tools.go
++#	go install github.com/bufbuild/buf/cmd/buf@v1.25.0
  
  # Note: if you have plugins in GOPATH you can update all of them via something like:
+ # for i in $(ls | grep vault-plugin-); do cd $i; git remote update; git reset --hard origin/master; dep ensure -update; git add .; git commit; git push; cd ..; done

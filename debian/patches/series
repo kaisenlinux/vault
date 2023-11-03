@@ -1,3 +1,4 @@
 remove-ci-bootstrap
-custom-path-for-yarn
 kaisen-rules-for-build
+custom-path-for-yarn
+no-fatal-error-if-no-git
