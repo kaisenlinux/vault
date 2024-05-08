@@ -46,19 +46,17 @@ module('Integration | Component | masked input', function (hooks) {
   });
 
   test('it renders a copy button when allowCopy is true', async function (assert) {
-    await render(hbs`<MaskedInput @allowCopy={{true}} />`);
+    this.set('value', { some: 'object' });
+    await render(hbs`<MaskedInput @allowCopy={{true}} @value={{this.value}} />`);
     assert.ok(component.copyButtonIsPresent);
   });
 
   test('it renders a download button when allowDownload is true', async function (assert) {
-    await render(hbs`<MaskedInput @allowDownload={{true}} /> <div id="modal-wormhole"></div>
-`);
+    await render(hbs`<MaskedInput @allowDownload={{true}} /> `);
     assert.ok(component.downloadIconIsPresent);
 
     await click('[data-test-download-icon]');
     assert.ok(component.downloadButtonIsPresent, 'clicking download icon opens modal with download button');
-
-    assert;
   });
 
   test('it shortens all outputs when displayOnly and masked', async function (assert) {
@@ -132,36 +130,6 @@ module('Integration | Component | masked input', function (hooks) {
       .exists('shows minus icon when unmasked because value is empty string');
   });
 
-  test('it shows "success" flash message when the value is successfully copied', async function (assert) {
-    await render(hbs`
-      <MaskedInput
-        @name="key"
-        @value="value"
-        @displayOnly={{true}}
-        @allowCopy={{true}}
-      />
-    `);
-    assert.dom('[data-test-masked-input]').exists('shows masked input');
-    assert.ok(component.copyButtonIsPresent);
-    await component.copyValue();
-    assert.ok(this.flashSuccessSpy.calledWith('Data copied!'), 'Renders correct flash message');
-  });
-
-  test('it shows "danger" flash message when the value fails to be copied (no value)', async function (assert) {
-    await render(hbs`
-      <MaskedInput
-        @name="key"
-        @value=""
-        @displayOnly={{true}}
-        @allowCopy={{true}}
-      />
-    `);
-    assert.dom('[data-test-masked-input]').exists('shows masked input');
-    assert.ok(component.copyButtonIsPresent);
-    await component.copyValue();
-    assert.ok(this.flashDangerSpy.calledWith('Error copying data'), 'Renders correct flash message');
-  });
-
   test('it should render stringify toggle in download modal', async function (assert) {
     assert.expect(3);
 
@@ -178,7 +146,6 @@ module('Integration | Component | masked input', function (hooks) {
     });
 
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <MaskedInput
         @name="key"
         @value={{this.value}}

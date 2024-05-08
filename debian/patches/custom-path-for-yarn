@@ -1,37 +1,34 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.15.1.orig/Makefile
-+++ vault-1.15.1/Makefile
-@@ -190,15 +190,15 @@ static-assets-dir:
+--- vault-1.16.2.orig/Makefile
++++ vault-1.16.2/Makefile
+@@ -186,26 +186,26 @@ static-assets-dir:
  
  install-ui-dependencies:
- 	@echo "--> Installing JavaScript assets"
+ 	@echo "==> Installing JavaScript assets"
 -	@cd ui && yarn
 +	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn
  
  test-ember: install-ui-dependencies
- 	@echo "--> Running ember tests"
+ 	@echo "==> Running ember tests"
 -	@cd ui && yarn run test:oss
 +	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run test:oss
  
  test-ember-enos: install-ui-dependencies
- 	@echo "--> Running ember tests with a real backend"
+ 	@echo "==> Running ember tests with a real backend"
 -	@cd ui && yarn run test:enos
 +	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run test:enos
  
- check-vault-in-path:
- 	@VAULT_BIN=$$(command -v vault) || { echo "vault command not found"; exit 1; }; \
-@@ -208,13 +208,13 @@ check-vault-in-path:
  ember-dist: install-ui-dependencies
  	@cd ui && npm rebuild node-sass
- 	@echo "--> Building Ember application"
+ 	@echo "==> Building Ember application"
 -	@cd ui && yarn run build
 +	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run build
  	@rm -rf ui/if-you-need-to-delete-this-open-an-issue-async-disk-cache
  
  ember-dist-dev: install-ui-dependencies
  	@cd ui && npm rebuild node-sass
- 	@echo "--> Building Ember application"
+ 	@echo "==> Building Ember application"
 -	@cd ui && yarn run build:dev
 +	@cd ui && $(CURDIR)/_build/lib/node_modules/yarn/bin/yarn run build:dev
  

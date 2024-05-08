@@ -8,12 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/hashicorp/cli"
 	"github.com/hashicorp/vault/audit"
 	"github.com/hashicorp/vault/builtin/plugin"
+	"github.com/hashicorp/vault/plugins/event"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/sdk/physical"
 	"github.com/hashicorp/vault/version"
-	"github.com/mitchellh/cli"
 
 	/*
 		The builtinplugins package is initialized here because it, in turn,
@@ -68,6 +69,7 @@ import (
 	physFile "github.com/hashicorp/vault/sdk/physical/file"
 	physInmem "github.com/hashicorp/vault/sdk/physical/inmem"
 
+	hcpvlib "github.com/hashicorp/vault-hcp-lib"
 	sr "github.com/hashicorp/vault/serviceregistration"
 	csr "github.com/hashicorp/vault/serviceregistration/consul"
 	ksr "github.com/hashicorp/vault/serviceregistration/kubernetes"
@@ -96,6 +98,9 @@ const (
 	// logged at startup _per node_. This was initially introduced for the events
 	// system being developed over multiple release cycles.
 	EnvVaultExperiments = "VAULT_EXPERIMENTS"
+	// EnvVaultPluginTmpdir sets the folder to use for Unix sockets when setting
+	// up containerized plugins.
+	EnvVaultPluginTmpdir = "VAULT_PLUGIN_TMPDIR"
 
 	// flagNameAddress is the flag used in the base command to read in the
 	// address of the Vault server.
@@ -136,6 +141,8 @@ const (
 	flagNameAllowedManagedKeys = "allowed-managed-keys"
 	// flagNamePluginVersion selects what version of a plugin should be used.
 	flagNamePluginVersion = "plugin-version"
+	// flagNameIdentityTokenKey selects the key used to sign plugin identity tokens
+	flagNameIdentityTokenKey = "identity-token-key"
 	// flagNameUserLockoutThreshold is the flag name used for tuning the auth mount lockout threshold parameter
 	flagNameUserLockoutThreshold = "user-lockout-threshold"
 	// flagNameUserLockoutDuration is the flag name used for tuning the auth mount lockout duration parameter
@@ -148,6 +155,8 @@ const (
 	flagNameDisableRedirects = "disable-redirects"
 	// flagNameCombineLogs is used to specify whether log output should be combined and sent to stdout
 	flagNameCombineLogs = "combine-logs"
+	// flagDisableGatedLogs is used to disable gated logs and immediately show the vault logs as they become available
+	flagDisableGatedLogs = "disable-gated-logs"
 	// flagNameLogFile is used to specify the path to the log file that Vault should use for logging
 	flagNameLogFile = "log-file"
 	// flagNameLogRotateBytes is the flag used to specify the number of bytes a log file should be before it is rotated.
@@ -161,6 +170,9 @@ const (
 	// flagNameLogLevel is used to specify the log level applied to logging
 	// Supported log levels: Trace, Debug, Error, Warn, Info
 	flagNameLogLevel = "log-level"
+	// flagNameDelegatedAuthAccessors allows operators to specify the allowed mount accessors a backend can delegate
+	// authentication
+	flagNameDelegatedAuthAccessors = "delegated-auth-accessors"
 )
 
 var (
@@ -173,6 +185,8 @@ var (
 	credentialBackends = map[string]logical.Factory{
 		"plugin": plugin.Factory,
 	}
+
+	eventBackends = map[string]event.Factory{}
 
 	logicalBackends = map[string]logical.Factory{
 		"plugin":   plugin.Factory,
@@ -240,17 +254,16 @@ var (
 			DefaultMount: "userpass",
 		},
 	}
-
-	initCommandsEnt = func(ui, serverCmdUi cli.Ui, runOpts *RunOptions, commands map[string]cli.CommandFactory) {}
 )
 
 func initCommands(ui, serverCmdUi cli.Ui, runOpts *RunOptions) map[string]cli.CommandFactory {
 	getBaseCommand := func() *BaseCommand {
 		return &BaseCommand{
-			UI:          ui,
-			tokenHelper: runOpts.TokenHelper,
-			flagAddress: runOpts.Address,
-			client:      runOpts.Client,
+			UI:             ui,
+			tokenHelper:    runOpts.TokenHelper,
+			flagAddress:    runOpts.Address,
+			client:         runOpts.Client,
+			hcpTokenHelper: runOpts.HCPTokenHelper,
 		}
 	}
 
@@ -484,6 +497,11 @@ func initCommands(ui, serverCmdUi cli.Ui, runOpts *RunOptions) map[string]cli.Co
 				BaseCommand: getBaseCommand(),
 			}, nil
 		},
+		"operator raft snapshot inspect": func() (cli.Command, error) {
+			return &OperatorRaftSnapshotInspectCommand{
+				BaseCommand: getBaseCommand(),
+			}, nil
+		},
 		"operator raft snapshot restore": func() (cli.Command, error) {
 			return &OperatorRaftSnapshotRestoreCommand{
 				BaseCommand: getBaseCommand(),
@@ -516,6 +534,11 @@ func initCommands(ui, serverCmdUi cli.Ui, runOpts *RunOptions) map[string]cli.Co
 		},
 		"operator usage": func() (cli.Command, error) {
 			return &OperatorUsageCommand{
+				BaseCommand: getBaseCommand(),
+			}, nil
+		},
+		"operator utilization": func() (cli.Command, error) {
+			return &OperatorUtilizationCommand{
 				BaseCommand: getBaseCommand(),
 			}, nil
 		},
@@ -722,6 +745,7 @@ func initCommands(ui, serverCmdUi cli.Ui, runOpts *RunOptions) map[string]cli.Co
 				},
 				AuditBackends:      auditBackends,
 				CredentialBackends: credentialBackends,
+				EventBackends:      eventBackends,
 				LogicalBackends:    logicalBackends,
 				PhysicalBackends:   physicalBackends,
 
@@ -906,8 +930,23 @@ func initCommands(ui, serverCmdUi cli.Ui, runOpts *RunOptions) map[string]cli.Co
 		},
 	}
 
-	initCommandsEnt(ui, serverCmdUi, runOpts, commands)
+	entInitCommands(ui, serverCmdUi, runOpts, commands)
+	initHCPCommands(ui, commands)
+
 	return commands
+}
+
+func initHCPCommands(ui cli.Ui, commands map[string]cli.CommandFactory) {
+	for cmd, cmdFactory := range hcpvlib.InitHCPCommand(ui) {
+		// check for conflicts and only put command in the map in case it doesn't conflict with existing one
+		_, ok := commands[cmd]
+		if !ok {
+			commands[cmd] = cmdFactory
+		} else {
+			ui.Error("Failed to initialize HCP commands.")
+			break
+		}
+	}
 }
 
 // MakeShutdownCh returns a channel that can be used for shutdown

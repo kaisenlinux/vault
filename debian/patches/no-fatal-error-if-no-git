@@ -1,8 +1,8 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.15.1.orig/tools/stubmaker/main.go
-+++ vault-1.15.1/tools/stubmaker/main.go
-@@ -25,7 +25,7 @@ var logger hclog.Logger
+--- vault-1.16.2.orig/tools/stubmaker/main.go
++++ vault-1.16.2/tools/stubmaker/main.go
+@@ -30,7 +30,7 @@ var logger hclog.Logger
  
  func fatal(err error) {
  	logger.Error("fatal error", "error", err)
@@ -10,4 +10,4 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 +	os.Exit(0)
  }
  
- func main() {
+ type generator struct {

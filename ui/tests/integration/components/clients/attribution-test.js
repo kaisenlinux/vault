@@ -19,7 +19,9 @@ module('Integration | Component | clients/attribution', function (hooks) {
   hooks.before(function () {
     sinon.stub(timestamp, 'now').callsFake(() => new Date('2018-04-03T14:15:30'));
   });
+
   hooks.beforeEach(function () {
+    this.csvDownloadStub = sinon.stub(this.owner.lookup('service:download'), 'csv');
     const mockNow = timestamp.now();
     this.mockNow = mockNow;
     this.set('startTimestamp', formatRFC3339(subMonths(mockNow, 6)));
@@ -40,14 +42,15 @@ module('Integration | Component | clients/attribution', function (hooks) {
       { label: 'auth2/', clients: 2, entity_clients: 1, non_entity_clients: 1 },
     ]);
   });
+
   hooks.after(function () {
     timestamp.now.restore();
+    this.csvDownloadStub.restore();
   });
 
   test('it renders empty state with no data', async function (assert) {
     await render(hbs`
-      <div id="modal-wormhole"></div>
-      <Clients::Attribution @chartLegend={{this.chartLegend}} />
+      <Clients::Attribution />
     `);
 
     assert.dom('[data-test-component="empty-state"]').exists();
@@ -59,9 +62,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
 
   test('it renders with data for namespaces', async function (assert) {
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.totalClientAttribution}}
         @totalUsageCounts={{this.totalUsageCounts}}
         @responseTimestamp={{this.timestamp}}
@@ -93,9 +94,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
     this.start = formatRFC3339(subMonths(this.mockNow, 1));
     this.end = formatRFC3339(subMonths(endOfMonth(this.mockNow), 1));
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.totalClientAttribution}}
         @totalUsageCounts={{this.totalUsageCounts}}
         @responseTimestamp={{this.timestamp}}
@@ -147,9 +146,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
 
   test('it renders single chart for current month', async function (assert) {
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.totalClientAttribution}}
         @totalUsageCounts={{this.totalUsageCounts}}
         @responseTimestamp={{this.timestamp}}
@@ -169,9 +166,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
 
   test('it renders single chart and correct text for for date range', async function (assert) {
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.totalClientAttribution}}
         @totalUsageCounts={{this.totalUsageCounts}}
         @responseTimestamp={{this.timestamp}}
@@ -193,9 +188,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
   test('it renders with data for selected namespace auth methods for a date range', async function (assert) {
     this.set('selectedNamespace', 'second');
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.namespaceMountsData}}
         @totalUsageCounts={{this.totalUsageCounts}}
         @responseTimestamp={{this.timestamp}}
@@ -225,9 +218,7 @@ module('Integration | Component | clients/attribution', function (hooks) {
 
   test('it renders modal', async function (assert) {
     await render(hbs`
-      <div id="modal-wormhole"></div>
       <Clients::Attribution
-        @chartLegend={{this.chartLegend}}
         @totalClientAttribution={{this.namespaceMountsData}}
         @responseTimestamp={{this.timestamp}}
         @startTimestamp="2022-06-01T23:00:11.050Z"
@@ -235,7 +226,97 @@ module('Integration | Component | clients/attribution', function (hooks) {
         />
     `);
     await click('[data-test-attribution-export-button]');
-    assert.dom('.modal.is-active .title').hasText('Export attribution data', 'modal appears to export csv');
-    assert.dom('.modal.is-active').includesText('June 2022 - December 2022');
+    assert
+      .dom('[data-test-export-modal-title]')
+      .hasText('Export attribution data', 'modal appears to export csv');
+    assert.dom('[ data-test-export-date-range]').includesText('June 2022 - December 2022');
+  });
+
+  test('it downloads csv data for date range', async function (assert) {
+    assert.expect(2);
+
+    await render(hbs`
+      <Clients::Attribution
+        @totalClientAttribution={{this.totalClientAttribution}}
+        @responseTimestamp={{this.timestamp}}
+        @startTimestamp="2022-06-01T23:00:11.050Z"
+        @endTimestamp="2022-12-01T23:00:11.050Z"
+        />
+    `);
+    await click('[data-test-attribution-export-button]');
+    await click('[data-test-confirm-button]');
+    const [filename, content] = this.csvDownloadStub.lastCall.args;
+    assert.strictEqual(filename, 'clients_by_namespace_June 2022-December 2022', 'csv has expected filename');
+    assert.strictEqual(
+      content,
+      `Namespace path,Mount path\n  *namespace totals, inclusive of mount clients,Total clients,Entity clients,Non-entity clients\nsecond,*,10,7,3\nfirst,*,5,3,2`,
+      'csv has expected content'
+    );
+  });
+
+  test('it downloads csv data for a single month', async function (assert) {
+    assert.expect(2);
+    await render(hbs`
+      <Clients::Attribution
+        @totalClientAttribution={{this.totalClientAttribution}}
+        @responseTimestamp={{this.timestamp}}
+        @startTimestamp="2022-06-01T23:00:11.050Z"
+        @endTimestamp="2022-06-21T23:00:11.050Z"
+        />
+    `);
+    await click('[data-test-attribution-export-button]');
+    await click('[data-test-confirm-button]');
+    const [filename, content] = this.csvDownloadStub.lastCall.args;
+    assert.strictEqual(filename, 'clients_by_namespace_June 2022', 'csv has single month in filename');
+    assert.strictEqual(
+      content,
+      `Namespace path,Mount path\n  *namespace totals, inclusive of mount clients,Total clients,Entity clients,Non-entity clients\nsecond,*,10,7,3\nfirst,*,5,3,2`,
+      'csv has expected content'
+    );
+  });
+
+  test('it downloads csv data when a namespace is selected', async function (assert) {
+    assert.expect(2);
+    this.selectedNamespace = 'second';
+
+    await render(hbs`
+      <Clients::Attribution
+        @totalClientAttribution={{this.namespaceMountsData}}
+        @selectedNamespace={{this.selectedNamespace}}
+        @responseTimestamp={{this.timestamp}}
+        @startTimestamp="2022-06-01T23:00:11.050Z"
+        @endTimestamp="2022-12-21T23:00:11.050Z"
+        />
+    `);
+
+    await click('[data-test-attribution-export-button]');
+    await click('[data-test-confirm-button]');
+    const [filename, content] = this.csvDownloadStub.lastCall.args;
+    assert.strictEqual(
+      filename,
+      'clients_by_mount_path_June 2022-December 2022',
+      'csv has expected filename for a selected namespace'
+    );
+    assert.strictEqual(
+      content,
+      `Namespace path,Mount path,Total clients,Entity clients,Non-entity clients\nsecond,auth1/,3,2,1\nsecond,auth2/,2,1,1`,
+      'csv has expected content for a selected namespace'
+    );
+  });
+
+  test('csv filename omits date if no start/end timestamp', async function (assert) {
+    assert.expect(1);
+
+    await render(hbs`
+      <Clients::Attribution
+        @totalClientAttribution={{this.totalClientAttribution}}
+        @responseTimestamp={{this.timestamp}}
+        />
+    `);
+
+    await click('[data-test-attribution-export-button]');
+    await click('[data-test-confirm-button]');
+    const [filename, ,] = this.csvDownloadStub.lastCall.args;
+    assert.strictEqual(filename, 'clients_by_namespace');
   });
 });

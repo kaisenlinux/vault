@@ -52,7 +52,7 @@ export default class SecretEngineModel extends Model {
   local;
   @attr('boolean', {
     helpText:
-      'When enabled - if a seal supporting seal wrapping is specified in the configuration, all critical security parameters (CSPs) in this backend will be seal wrapped. (For K/V mounts, all values will be seal wrapped.) This can only be specified at mount time.',
+      'When enabled - if a seal supporting seal wrapping is specified in the configuration, all critical security parameters (CSPs) in this backend will be seal wrapped. (For KV mounts, all values will be seal wrapped.) This can only be specified at mount time.',
   })
   sealWrap;
   @attr('boolean') externalEntropyAccess;
@@ -108,15 +108,8 @@ export default class SecretEngineModel extends Model {
   deleteVersionAfter;
 
   /* GETTERS */
-  get modelTypeForKV() {
-    const engineType = this.engineType;
-    if ((engineType === 'kv' || engineType === 'generic') && this.version === 2) {
-      return 'secret-v2';
-    }
-    return 'secret';
-  }
   get isV2KV() {
-    return this.modelTypeForKV === 'secret-v2';
+    return this.version === 2 && (this.engineType === 'kv' || this.engineType === 'generic');
   }
 
   get attrs() {
@@ -130,14 +123,9 @@ export default class SecretEngineModel extends Model {
   }
 
   get icon() {
-    const defaultIcon = this.engineType || 'secrets';
-    return (
-      {
-        keymgmt: 'key',
-        kmip: 'secrets',
-        ldap: 'folder-users',
-      }[this.engineType] || defaultIcon
-    );
+    const engineData = allEngines().find((engine) => engine.type === this.engineType);
+
+    return engineData?.glyph || 'lock';
   }
 
   get engineType() {

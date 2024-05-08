@@ -185,6 +185,8 @@ This endpoint generates a performance secondary activation token for the
 cluster with the given opaque identifier, which must be unique. This
 identifier can later be used to revoke a secondary's access.
 
+**This endpoint requires 'sudo' capability.**
+
 | Method | Path                                                   |
 | :----- | :----------------------------------------------------- |
 | `POST` | `/sys/replication/performance/primary/secondary-token` |

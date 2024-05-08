@@ -3,16 +3,4 @@
   SPDX-License-Identifier: BUSL-1.1
 ~}}
 
-{{#if this.hasMenu}}
-  <PopupMenu>
-    <Confirm as |c|>
-      <nav class="menu">
-        <ul class="menu-list">
-          {{yield (hash Message=c.Message)}}
-        </ul>
-      </nav>
-    </Confirm>
-  </PopupMenu>
-{{else}}
-  {{yield this.item}}
-{{/if}}
+{{yield this.item}}

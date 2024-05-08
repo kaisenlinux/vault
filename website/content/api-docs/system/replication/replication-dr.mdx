@@ -181,6 +181,8 @@ This endpoint generates a DR secondary activation token for the
 cluster with the given opaque identifier, which must be unique. This
 identifier can later be used to revoke a DR secondary's access.
 
+**This endpoint requires 'sudo' capability.**
+
 | Method | Path                                          |
 | :----- | :-------------------------------------------- |
 | `POST` | `/sys/replication/dr/primary/secondary-token` |
@@ -587,8 +589,6 @@ being generated when needed and deleted soon after.
 
 This endpoint reads the configuration and process of the current generation
 attempt.
-
-@include 'alerts/restricted-root.mdx'
 
 | Method | Path                                                             |
 | :----- | :--------------------------------------------------------------- |

@@ -16,6 +16,7 @@ export default Controller.extend({
   permissions: service(),
   namespaceService: service('namespace'),
   flashMessages: service(),
+  customMessages: service(),
 
   vaultVersion: service('version'),
   console: service(),
@@ -38,7 +39,7 @@ export default Controller.extend({
   consoleOpen: alias('console.isOpen'),
   activeCluster: alias('auth.activeCluster'),
 
-  permissionReadFailed: alias('permissions.readFailed'),
+  permissionBanner: alias('permissions.permissionsBanner'),
 
   actions: {
     toggleConsole() {

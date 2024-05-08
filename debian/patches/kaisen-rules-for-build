@@ -1,7 +1,7 @@
 Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 
---- vault-1.15.1.orig/scripts/build.sh
-+++ vault-1.15.1/scripts/build.sh
+--- vault-1.16.2.orig/scripts/build.sh
++++ vault-1.16.2/scripts/build.sh
 @@ -21,8 +21,8 @@ cd "$DIR"
  BUILD_TAGS="${BUILD_TAGS:-"vault"}"
  
@@ -22,8 +22,8 @@ Author: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
      -o "bin/vault" \
      -tags "${BUILD_TAGS}" \
      .
---- vault-1.15.1.orig/scripts/ci-helper.sh
-+++ vault-1.15.1/scripts/ci-helper.sh
+--- vault-1.16.2.orig/scripts/ci-helper.sh
++++ vault-1.16.2/scripts/ci-helper.sh
 @@ -16,7 +16,7 @@ export GIT_PAGER=cat
  function build_date() {
    # It's tricky to do an RFC3339 format in a cross platform way, so we hardcode UTC

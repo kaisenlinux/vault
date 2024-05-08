@@ -21,8 +21,17 @@ export default Controller.extend({
 
   filterFocused: false,
 
-  // set via the route `loading` action
-  isLoading: false,
+  isLoading: false, // set via the route `loading` action
+  policyToDelete: null, // set when clicking 'Delete' from popup menu
+
+  // callback from HDS pagination to set the queryParams page
+  get paginationQueryParams() {
+    return (page) => {
+      return {
+        page,
+      };
+    };
+  },
 
   filterMatchesKey: computed('filter', 'model', 'model.[]', function () {
     var filter = this.filter;
@@ -68,7 +77,8 @@ export default Controller.extend({
           flash.danger(
             `There was an error deleting the ${policyType.toUpperCase()} policy "${name}": ${errors}.`
           );
-        });
+        })
+        .finally(() => this.set('policyToDelete', null));
     },
   },
 });

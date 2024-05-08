@@ -8,20 +8,15 @@ import { setupApplicationTest } from 'ember-qunit';
 import { click, currentRouteName, fillIn, visit } from '@ember/test-helpers';
 import authPage from 'vault/tests/pages/auth';
 import { setupMirage } from 'ember-cli-mirage/test-support';
-import ENV from 'vault/config/environment';
+import mfaConfigHandlers from 'vault/mirage/handlers/mfa-config';
 
 module('Acceptance | mfa-login-enforcement', function (hooks) {
   setupApplicationTest(hooks);
   setupMirage(hooks);
 
-  hooks.before(function () {
-    ENV['ember-cli-mirage'].handler = 'mfaConfig';
-  });
   hooks.beforeEach(function () {
+    mfaConfigHandlers(this.server);
     return authPage.login();
-  });
-  hooks.after(function () {
-    ENV['ember-cli-mirage'].handler = null;
   });
 
   test('it should send the correct data when creating an enforcement', async function (assert) {
@@ -69,7 +64,7 @@ module('Acceptance | mfa-login-enforcement', function (hooks) {
       'Cancel transitions to enforcements list'
     );
     await click('[data-test-enforcement-create]');
-    await click('.breadcrumb a');
+    await click('.hds-breadcrumb a');
     assert.strictEqual(
       currentRouteName(),
       'vault.cluster.access.mfa.enforcements.index',
@@ -121,7 +116,7 @@ module('Acceptance | mfa-login-enforcement', function (hooks) {
       'vault.cluster.access.mfa.enforcements.enforcement.index',
       'Details more menu action transitions to enforcement route'
     );
-    await click('.breadcrumb a');
+    await click('.hds-breadcrumb a');
     await click('[data-test-popup-menu-trigger]');
     await click('[data-test-list-item-link="edit"]');
     assert.strictEqual(

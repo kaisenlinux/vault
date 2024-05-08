@@ -10,7 +10,7 @@
     </h3>
 
     {{#if (or @replication.dr.clusterId @replication.performance.clusterId)}}
-      <LinkTo class="is-no-underline" @route="vault.cluster.replication.index">
+      <LinkTo @route="vault.cluster.replication.index">
         Details
       </LinkTo>
     {{/if}}
@@ -23,7 +23,7 @@
     {{#if (and @version.hasPerfReplication @version.hasDRReplication)}}
       <div
         class="is-grid grid-2-columns grid-gap-2 has-top-margin-m has-bottom-margin-xs grid-align-items-start"
-        data-test-dr-perf-replication
+        data-test-type="dr-perf"
       >
         <Dashboard::ReplicationStateText
           @title="DR primary"
@@ -50,7 +50,7 @@
 
       <div
         class="is-grid grid-2-columns grid-gap-2 has-top-margin-m has-bottom-margin-m grid-align-items-start"
-        data-test-dr-replication
+        data-test-type="dr"
       >
         <Dashboard::ReplicationStateText
           @title="state"
@@ -87,10 +87,14 @@
       @title="Replication not set up"
       @message="Data will be listed here. Enable a primary replication cluster to get started."
       class="has-top-margin-m"
+      data-test-empty-state="replication"
     >
-      <div>
-        <LinkTo @route="vault.cluster.replication">Enable replication</LinkTo>
-      </div>
+      <Hds::Link::Standalone
+        @icon="chevron-right"
+        @iconPosition="trailing"
+        @text="Enable replication"
+        @route="vault.cluster.replication"
+      />
     </EmptyState>
   {{/if}}
 </Hds::Card::Container>
