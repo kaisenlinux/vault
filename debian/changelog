@@ -1,3 +1,11 @@
+vault (1.17.2-1kaisen) kaisen-packages; urgency=medium
+
+  * Import the 1.17.2 version
+  * Drop the i386 build
+  * Bump the required Go version to build Vault
+
+ -- Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>  Wed, 24 Jul 2024 20:14:08 +0200
+
 vault (1.16.2-1kaisen) kaisen-packages; urgency=medium
 
   * Import the 1.16.2 version

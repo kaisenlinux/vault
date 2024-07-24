@@ -6,7 +6,10 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +32,7 @@ import (
 	"github.com/hashicorp/go-sockaddr"
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/vault/helper/namespace"
+	"github.com/hashicorp/vault/http/priority"
 	"github.com/hashicorp/vault/internalshared/configutil"
 	"github.com/hashicorp/vault/limits"
 	"github.com/hashicorp/vault/sdk/helper/consts"
@@ -112,7 +116,7 @@ var (
 		"/v1/sys/wrapping/wrap",
 	}
 	websocketRawPaths = []string{
-		"/v1/sys/events/subscribe",
+		"sys/events/subscribe",
 	}
 	oidcProtectedPathRegex = regexp.MustCompile(`^identity/oidc/provider/\w(([\w-.]+)?\w)?/userinfo$`)
 )
@@ -124,9 +128,7 @@ func init() {
 		"!sys/storage/raft/snapshot-auto/config",
 	})
 	websocketPaths.AddPaths(websocketRawPaths)
-	for _, path := range websocketRawPaths {
-		alwaysRedirectPaths.AddPaths([]string{strings.TrimPrefix(path, "/v1/")})
-	}
+	alwaysRedirectPaths.AddPaths(websocketRawPaths)
 }
 
 type HandlerAnchor struct{}
@@ -248,6 +250,7 @@ func handler(props *vault.HandlerProperties) http.Handler {
 	wrappedHandler = rateLimitQuotaWrapping(wrappedHandler, core)
 	wrappedHandler = entWrapGenericHandler(core, wrappedHandler, props)
 	wrappedHandler = wrapMaxRequestSizeHandler(wrappedHandler, props)
+	wrappedHandler = priority.WrapRequestPriorityHandler(wrappedHandler)
 
 	// Add an extra wrapping handler if the DisablePrintableCheck listener
 	// setting isn't true that checks for non-printable characters in the
@@ -429,7 +432,7 @@ func wrapGenericHandler(core *vault.Core, h http.Handler, props *vault.HandlerPr
 			} else if standby && !perfStandby {
 				// Standby nodes, not performance standbys, don't start plugins
 				// so registration can not happen, instead redirect to active
-				respondStandby(core, w, r.URL)
+				respondStandby(core, w, r)
 				cancelFunc()
 				return
 			} else {
@@ -456,7 +459,12 @@ func wrapGenericHandler(core *vault.Core, h http.Handler, props *vault.HandlerPr
 		// The uuid for the request is going to be generated when a logical
 		// request is generated. But, here we generate one to be able to track
 		// in-flight requests, and use that to update the req data with clientID
-		inFlightReqID, err := uuid.GenerateUUID()
+		reqIDGen := props.RequestIDGenerator
+		if reqIDGen == nil {
+			// By default use a UUID
+			reqIDGen = uuid.GenerateUUID
+		}
+		inFlightReqID, err := reqIDGen()
 		if err != nil {
 			respondError(nw, http.StatusInternalServerError, fmt.Errorf("failed to generate an identifier for the in-flight request"))
 		}
@@ -507,6 +515,8 @@ func WrapForwardedForHandler(h http.Handler, l *configutil.Listener) http.Handle
 	hopSkips := l.XForwardedForHopSkips
 	authorizedAddrs := l.XForwardedForAuthorizedAddrs
 	rejectNotAuthz := l.XForwardedForRejectNotAuthorized
+	clientCertHeader := l.XForwardedForClientCertHeader
+	clientCertHeaderDecoders := l.XForwardedForClientCertHeaderDecoders
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		headers, headersOK := r.Header[textproto.CanonicalMIMEHeaderKey("X-Forwarded-For")]
 		if !headersOK || len(headers) == 0 {
@@ -589,6 +599,60 @@ func WrapForwardedForHandler(h http.Handler, l *configutil.Listener) http.Handle
 		}
 
 		r.RemoteAddr = net.JoinHostPort(acc[indexToUse], port)
+
+		// Import the Client Certificate forwarded by the reverse proxy
+		// There should be only 1 instance of the header, but looping allows for more flexibility
+		clientCertHeaders, clientCertHeadersOK := r.Header[textproto.CanonicalMIMEHeaderKey(clientCertHeader)]
+		if clientCertHeadersOK && len(clientCertHeaders) > 0 {
+			var client_certs []*x509.Certificate
+			for _, header := range clientCertHeaders {
+				// Multiple certs should be comma delimetered
+				vals := strings.Split(header, ",")
+				for _, v := range vals {
+					actions := strings.Split(clientCertHeaderDecoders, ",")
+					for _, action := range actions {
+						switch action {
+						case "URL":
+							decoded, err := url.QueryUnescape(v)
+							if err != nil {
+								respondError(w, http.StatusBadRequest, fmt.Errorf("failed to url unescape the client certificate: %w", err))
+								return
+							}
+							v = decoded
+						case "BASE64":
+							decoded, err := base64.StdEncoding.DecodeString(v)
+							if err != nil {
+								respondError(w, http.StatusBadRequest, fmt.Errorf("failed to base64 decode the client certificate: %w", err))
+								return
+							}
+							v = string(decoded[:])
+						case "DER":
+							decoded, _ := pem.Decode([]byte(v))
+							if decoded == nil {
+								respondError(w, http.StatusBadRequest, fmt.Errorf("failed to convert the client certificate to DER format: %w", err))
+								return
+							}
+							v = string(decoded.Bytes[:])
+						default:
+							respondError(w, http.StatusBadRequest, fmt.Errorf("unknown decode option specified: %s", action))
+							return
+						}
+					}
+
+					cert, err := x509.ParseCertificate([]byte(v))
+					if err != nil {
+						respondError(w, http.StatusBadRequest, fmt.Errorf("failed to parse the client certificate: %w", err))
+						return
+					}
+					client_certs = append(client_certs, cert)
+				}
+			}
+			if r.TLS == nil {
+				respondError(w, http.StatusBadRequest, fmt.Errorf("Server must use TLS for certificate authentication"))
+			} else {
+				r.TLS.PeerCertificates = append(client_certs, r.TLS.PeerCertificates...)
+			}
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -842,7 +906,7 @@ func handleRequestForwarding(core *vault.Core, handler http.Handler) http.Handle
 				respondError(w, http.StatusBadRequest, err)
 				return
 			}
-			path := ns.TrimmedPath(r.URL.Path[len("/v1/"):])
+			path := trimPath(ns, r.URL.Path)
 			if !perfStandbyAlwaysForwardPaths.HasPath(path) && !alwaysRedirectPaths.HasPath(path) {
 				handler.ServeHTTP(w, r)
 				return
@@ -879,14 +943,14 @@ func handleRequestForwarding(core *vault.Core, handler http.Handler) http.Handle
 
 func forwardRequest(core *vault.Core, w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get(vault.IntNoForwardingHeaderName) != "" {
-		respondStandby(core, w, r.URL)
+		respondStandby(core, w, r)
 		return
 	}
 
 	if r.Header.Get(NoRequestForwardingHeaderName) != "" {
 		// Forwarding explicitly disabled, fall back to previous behavior
 		core.Logger().Debug("handleRequestForwarding: forwarding disabled by client request")
-		respondStandby(core, w, r.URL)
+		respondStandby(core, w, r)
 		return
 	}
 
@@ -895,9 +959,25 @@ func forwardRequest(core *vault.Core, w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err)
 		return
 	}
-	path := ns.TrimmedPath(r.URL.Path[len("/v1/"):])
-	if alwaysRedirectPaths.HasPath(path) {
-		respondStandby(core, w, r.URL)
+	path := trimPath(ns, r.URL.Path)
+	redirect := alwaysRedirectPaths.HasPath(path)
+	// websocket paths are special, because they can contain a namespace
+	// in front of them. This isn't an issue on perf standbys where the
+	// namespace manager will know all the namespaces, so we will have
+	// already extracted it from the path. But regular standbys don't have
+	// knowledge of the namespaces, so we need
+	// to add an extra check
+	if !redirect && !core.PerfStandby() {
+		for _, websocketPath := range websocketRawPaths {
+			if strings.Contains(path, websocketPath) {
+				redirect = true
+				break
+			}
+		}
+	}
+	if redirect {
+		core.Logger().Trace("cannot forward request (path included in always redirect paths), falling back to redirection to standby")
+		respondStandby(core, w, r)
 		return
 	}
 
@@ -913,7 +993,7 @@ func forwardRequest(core *vault.Core, w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Fall back to redirection
-		respondStandby(core, w, r.URL)
+		respondStandby(core, w, r)
 		return
 	}
 
@@ -962,8 +1042,20 @@ func request(core *vault.Core, w http.ResponseWriter, rawReq *http.Request, r *l
 		}
 		resp.AddWarning("Timeout hit while waiting for local replicated cluster to apply primary's write; this client may encounter stale reads of values written during this operation.")
 	}
+
+	// We need to rely on string comparison here because the error could be
+	// returned from an RPC client call with a non-ReplicatedResponse return
+	// value (see: PersistAlias). In these cases, the error we get back will
+	// contain the non-wrapped error message string we're looking for. We would
+	// love to clean up all error wrapping to be consistent in Vault but we
+	// considered that too high risk for now.
+	if err != nil && strings.Contains(err.Error(), consts.ErrOverloaded.Error()) {
+		logical.RespondWithStatusCode(resp, r, http.StatusServiceUnavailable)
+		respondError(w, http.StatusServiceUnavailable, err)
+		return resp, false, false
+	}
 	if errwrap.Contains(err, consts.ErrStandby.Error()) {
-		respondStandby(core, w, rawReq.URL)
+		respondStandby(core, w, rawReq)
 		return resp, false, false
 	}
 	if err != nil && errwrap.Contains(err, logical.ErrPerfStandbyPleaseForward.Error()) {
@@ -1012,7 +1104,8 @@ func request(core *vault.Core, w http.ResponseWriter, rawReq *http.Request, r *l
 }
 
 // respondStandby is used to trigger a redirect in the case that this Vault is currently a hot standby
-func respondStandby(core *vault.Core, w http.ResponseWriter, reqURL *url.URL) {
+func respondStandby(core *vault.Core, w http.ResponseWriter, r *http.Request) {
+	reqURL := r.URL
 	// Request the leader address
 	_, redirectAddr, _, err := core.Leader()
 	if err != nil {
@@ -1049,13 +1142,23 @@ func respondStandby(core *vault.Core, w http.ResponseWriter, reqURL *url.URL) {
 		RawQuery: reqURL.RawQuery,
 	}
 
+	ctx := r.Context()
+	ns, err := namespace.FromContext(ctx)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err)
+	}
 	// WebSockets schemas are ws or wss
-	if websocketPaths.HasPath(reqURL.Path) {
+	if websocketPaths.HasPath(trimPath(ns, reqURL.Path)) {
 		if finalURL.Scheme == "http" {
 			finalURL.Scheme = "ws"
 		} else {
 			finalURL.Scheme = "wss"
 		}
+	}
+
+	originalPath, ok := logical.ContextOriginalRequestPathValue(ctx)
+	if ok {
+		finalURL.Path = originalPath
 	}
 
 	// Ensure there is a scheme, default to https
@@ -1308,4 +1411,9 @@ func respondOIDCPermissionDenied(w http.ResponseWriter) {
 
 	enc := json.NewEncoder(w)
 	enc.Encode(oidcResponse)
+}
+
+// trimPath removes the /v1/ prefix and the namespace from the path
+func trimPath(ns *namespace.Namespace, path string) string {
+	return ns.TrimmedPath(path[len("/v1/"):])
 }

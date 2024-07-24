@@ -174,7 +174,7 @@ hooks:
 
 # bootstrap the build by generating any necessary code and downloading additional tools that may
 # be used by devs.
-bootstrap: prep tools
+bootstrap: tools prep
 
 # Note: if you have plugins in GOPATH you can update all of them via something like:
 # for i in $(ls | grep vault-plugin-); do cd $i; git remote update; git reset --hard origin/master; dep ensure -update; git add .; git commit; git push; cd ..; done
@@ -224,7 +224,10 @@ proto: check-tools-external
 	protoc-go-inject-tag -input=./helper/identity/types.pb.go
 	protoc-go-inject-tag -input=./helper/identity/mfa/types.pb.go
 
-fmt:
+importfmt: check-tools-external
+	find . -name '*.go' | grep -v pb.go | grep -v vendor | xargs gosimports -w
+
+fmt: importfmt
 	find . -name '*.go' | grep -v pb.go | grep -v vendor | xargs gofumpt -w
 
 fmtcheck: check-go-fmt
@@ -363,9 +366,13 @@ ci-get-version-package:
 ci-install-external-tools:
 	@$(CURDIR)/scripts/ci-helper.sh install-external-tools
 
-.PHONY: ci-prepare-legal
-ci-prepare-legal:
-	@$(CURDIR)/scripts/ci-helper.sh prepare-legal
+.PHONY: ci-prepare-ent-legal
+ci-prepare-ent-legal:
+	@$(CURDIR)/scripts/ci-helper.sh prepare-ent-legal
+
+.PHONY: ci-prepare-ce-legal
+ci-prepare-ce-legal:
+	@$(CURDIR)/scripts/ci-helper.sh prepare-ce-legal
 
 .PHONY: ci-update-external-tool-modules
 ci-update-external-tool-modules:

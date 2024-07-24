@@ -4,7 +4,7 @@
  */
 
 import Route from '@ember/routing/route';
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 import { findDestination } from 'core/helpers/sync-destinations';
 
 import type StoreService from 'vault/services/store';

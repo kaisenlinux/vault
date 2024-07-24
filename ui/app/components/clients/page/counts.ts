@@ -11,24 +11,27 @@ import { parseAPITimestamp } from 'core/utils/date-formatters';
 import { filterVersionHistory, formatDateObject } from 'core/utils/client-count-utils';
 import timestamp from 'core/utils/timestamp';
 
+import type AdapterError from '@ember-data/adapter';
+import type FlagsService from 'vault/services/flags';
+import type StoreService from 'vault/services/store';
 import type VersionService from 'vault/services/version';
 import type ClientsActivityModel from 'vault/models/clients/activity';
 import type ClientsConfigModel from 'vault/models/clients/config';
 import type ClientsVersionHistoryModel from 'vault/models/clients/version-history';
-import type StoreService from 'vault/services/store';
-
 interface Args {
   activity: ClientsActivityModel;
+  activityError?: AdapterError;
   config: ClientsConfigModel;
-  versionHistory: ClientsVersionHistoryModel[];
-  startTimestamp: number;
   endTimestamp: number;
-  namespace: string;
   mountPath: string;
+  namespace: string;
   onFilterChange: CallableFunction;
+  startTimestamp: number;
+  versionHistory: ClientsVersionHistoryModel[];
 }
 
 export default class ClientsCountsPageComponent extends Component<Args> {
+  @service declare readonly flags: FlagsService;
   @service declare readonly version: VersionService;
   @service declare readonly store: StoreService;
 
@@ -74,6 +77,9 @@ export default class ClientsCountsPageComponent extends Component<Args> {
             break;
           case version.includes('1.10'):
             explanation = '- We added monthly breakdowns and mount level attribution starting in 1.10.';
+            break;
+          case version.includes('1.17'):
+            explanation = '- We separated ACME clients from non-entity clients starting in 1.17.';
             break;
           default:
             explanation = '';
@@ -158,11 +164,17 @@ export default class ClientsCountsPageComponent extends Component<Args> {
         ? this.activityForNamespace?.mounts.find((mount) => mount.label === mountPath)
         : this.activityForNamespace;
     }
-    return activity.total;
+    return activity?.total;
+  }
+
+  get hasSecretsSyncClients(): boolean {
+    const { activity } = this.args;
+    // if there is any sync client data, show it
+    return activity && activity?.total?.secret_syncs > 0;
   }
 
   @action
-  onDateChange(dateObject: { dateType: string; monthIdx: string; year: string }) {
+  onDateChange(dateObject: { dateType: string; monthIdx: number; year: number }) {
     const { dateType, monthIdx, year } = dateObject;
     const { config } = this.args;
     const currentTimestamp = getUnixTime(timestamp.now());

@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +40,7 @@ const (
 	activityConfigKey      = "config"
 	activityIntentLogKey   = "endofmonth"
 
+	activityACMERegenerationKey = "acme-regeneration"
 	// sketch for each month that stores hash of client ids
 	distinctClientsBasePath = "log/distinctclients/"
 
@@ -97,6 +97,8 @@ const (
 	// to enforce when reporting is enabled.
 	activityLogMaximumRetentionMonths = 60
 )
+
+var ActivityClientTypes = []string{nonEntityTokenActivityType, entityActivityType, secretSyncActivityType, ACMEActivityType}
 
 type segmentInfo struct {
 	startTimestamp       int64
@@ -267,9 +269,18 @@ func NewActivityLog(core *Core, logger log.Logger, view *BarrierView, metrics me
 		precomputedQueryWritten:  make(chan struct{}),
 	}
 
-	config, err := a.loadConfigOrDefault(core.activeContext, core.ManualLicenseReportingEnabled())
+	config, err := a.loadConfigOrDefault(core.activeContext)
 	if err != nil {
 		return nil, err
+	}
+
+	// check if the retention time is lesser than the default in storage when reporting is enabled to support upgrades
+	if (config.RetentionMonths < ActivityLogMinimumRetentionMonths) && core.ManualLicenseReportingEnabled() {
+		updatedConfig, err := a.setDefaultRetentionMonthsInConfig(core.activeContext, config)
+		if err != nil {
+			return nil, err
+		}
+		config = updatedConfig
 	}
 
 	a.SetConfigInit(config)
@@ -509,7 +520,7 @@ func parseSegmentNumberFromPath(path string) (int, bool) {
 
 // availableLogs returns the start_time(s) (in UTC) associated with months for which logs exist,
 // sorted last to first
-func (a *ActivityLog) availableLogs(ctx context.Context) ([]time.Time, error) {
+func (a *ActivityLog) availableLogs(ctx context.Context, upTo time.Time) ([]time.Time, error) {
 	paths := make([]string, 0)
 	for _, basePath := range []string{activityEntityBasePath, activityTokenBasePath} {
 		p, err := a.view.List(ctx, basePath)
@@ -524,14 +535,17 @@ func (a *ActivityLog) availableLogs(ctx context.Context) ([]time.Time, error) {
 	out := make([]time.Time, 0)
 	for _, path := range paths {
 		// generate a set of unique start times
-		time, err := timeutil.ParseTimeFromPath(path)
+		segmentTime, err := timeutil.ParseTimeFromPath(path)
 		if err != nil {
 			return nil, err
 		}
+		if segmentTime.After(upTo) {
+			continue
+		}
 
-		if _, present := pathSet[time]; !present {
-			pathSet[time] = struct{}{}
-			out = append(out, time)
+		if _, present := pathSet[segmentTime]; !present {
+			pathSet[segmentTime] = struct{}{}
+			out = append(out, segmentTime)
 		}
 	}
 
@@ -540,15 +554,15 @@ func (a *ActivityLog) availableLogs(ctx context.Context) ([]time.Time, error) {
 		return out[i].After(out[j])
 	})
 
-	a.logger.Trace("scanned existing logs", "out", out)
+	a.logger.Trace("scanned existing logs", "out", out, "up to", upTo)
 
 	return out, nil
 }
 
 // getMostRecentActivityLogSegment gets the times (in UTC) associated with the most recent
 // contiguous set of activity logs, sorted in decreasing order (latest to earliest)
-func (a *ActivityLog) getMostRecentActivityLogSegment(ctx context.Context) ([]time.Time, error) {
-	logTimes, err := a.availableLogs(ctx)
+func (a *ActivityLog) getMostRecentActivityLogSegment(ctx context.Context, now time.Time) ([]time.Time, error) {
+	logTimes, err := a.availableLogs(ctx, now)
 	if err != nil {
 		return nil, err
 	}
@@ -890,7 +904,7 @@ func (a *ActivityLog) refreshFromStoredLog(ctx context.Context, wg *sync.WaitGro
 	a.fragmentLock.Lock()
 	defer a.fragmentLock.Unlock()
 
-	decreasingLogTimes, err := a.getMostRecentActivityLogSegment(ctx)
+	decreasingLogTimes, err := a.getMostRecentActivityLogSegment(ctx, now)
 	if err != nil {
 		return err
 	}
@@ -1103,15 +1117,15 @@ func (a *ActivityLog) queriesAvailable(ctx context.Context) (bool, error) {
 }
 
 // setupActivityLog hooks up the singleton ActivityLog into Core.
-func (c *Core) setupActivityLog(ctx context.Context, wg *sync.WaitGroup) error {
+func (c *Core) setupActivityLog(ctx context.Context, wg *sync.WaitGroup, reload bool) error {
 	c.activityLogLock.Lock()
 	defer c.activityLogLock.Unlock()
-	return c.setupActivityLogLocked(ctx, wg)
+	return c.setupActivityLogLocked(ctx, wg, reload)
 }
 
 // setupActivityLogLocked hooks up the singleton ActivityLog into Core.
 // this function should be called with activityLogLock.
-func (c *Core) setupActivityLogLocked(ctx context.Context, wg *sync.WaitGroup) error {
+func (c *Core) setupActivityLogLocked(ctx context.Context, wg *sync.WaitGroup, reload bool) error {
 	logger := c.baseLogger.Named("activity")
 	c.AddLogger(logger)
 
@@ -1151,11 +1165,22 @@ func (c *Core) setupActivityLogLocked(ctx context.Context, wg *sync.WaitGroup) e
 			go manager.activeFragmentWorker(ctx)
 		}
 
-		// Check for any intent log, in the background
+		doRegeneration := !reload && !manager.hasRegeneratedACME(ctx)
 		manager.computationWorkerDone = make(chan struct{})
+		// handle leftover intent logs and regenerating precomputed queries
+		// for ACME
 		go func() {
-			manager.precomputedQueryWorker(ctx)
-			close(manager.computationWorkerDone)
+			defer close(manager.computationWorkerDone)
+			if doRegeneration {
+				err := manager.regeneratePrecomputedQueries(ctx)
+				if err != nil {
+					manager.logger.Error("unable to regenerate ACME data", "error", err)
+				}
+			} else {
+				// run the precomputed query worker normally
+				// errors are logged within the function
+				manager.precomputedQueryWorker(ctx, nil)
+			}
 		}()
 
 		// Catch up on garbage collection
@@ -1168,6 +1193,90 @@ func (c *Core) setupActivityLogLocked(ctx context.Context, wg *sync.WaitGroup) e
 	}
 
 	return nil
+}
+
+func (a *ActivityLog) hasRegeneratedACME(ctx context.Context) bool {
+	regenerated, err := a.view.Get(ctx, activityACMERegenerationKey)
+	if err != nil {
+		a.logger.Error("unable to access ACME regeneration key")
+		return false
+	}
+	return regenerated != nil
+}
+
+func (a *ActivityLog) writeRegeneratedACME(ctx context.Context) error {
+	regeneratedEntry, err := logical.StorageEntryJSON(activityACMERegenerationKey, true)
+	if err != nil {
+		return err
+	}
+	return a.view.Put(ctx, regeneratedEntry)
+}
+
+func (a *ActivityLog) regeneratePrecomputedQueries(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	a.l.RLock()
+	doneCh := a.doneCh
+	a.l.RUnlock()
+	go func() {
+		select {
+		case <-doneCh:
+			cancel()
+		case <-ctx.Done():
+			break
+		}
+	}()
+
+	intentLogEntry, err := a.view.Get(ctx, activityIntentLogKey)
+	if err != nil {
+		a.logger.Error("could not load existing intent log", "error", err)
+	}
+	var intentLog *ActivityIntentLog
+	if intentLogEntry == nil {
+		regenerationIntentLog, err := a.createRegenerationIntentLog(ctx, a.clock.Now().UTC())
+		if errors.Is(err, previousMonthNotFoundErr) {
+			// if there are no segments earlier than the current month, consider
+			// this a success
+			return a.writeRegeneratedACME(ctx)
+		}
+		if err != nil {
+			return err
+		}
+		intentLog = regenerationIntentLog
+		a.logger.Debug("regenerating precomputed queries", "previous month", time.Unix(intentLog.PreviousMonth, 0).UTC(), "next month", time.Unix(intentLog.NextMonth, 0).UTC())
+	}
+	err = a.precomputedQueryWorker(ctx, intentLog)
+	if err != nil && !errors.Is(err, previousMonthNotFoundErr) {
+		return err
+	}
+	return a.writeRegeneratedACME(ctx)
+}
+
+func (a *ActivityLog) createRegenerationIntentLog(ctx context.Context, now time.Time) (*ActivityIntentLog, error) {
+	intentLog := &ActivityIntentLog{}
+	segments, err := a.availableLogs(ctx, now)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching available logs: %w", err)
+	}
+
+	for i, segment := range segments {
+		if timeutil.IsCurrentMonth(segment, now) {
+			continue
+		}
+
+		intentLog.PreviousMonth = segment.Unix()
+		if i > 0 {
+			intentLog.NextMonth = segments[i-1].Unix()
+		}
+		break
+	}
+
+	if intentLog.PreviousMonth == 0 {
+		return nil, previousMonthNotFoundErr
+	}
+
+	return intentLog, nil
 }
 
 // stopActivityLogLocked removes the ActivityLog from Core
@@ -1411,7 +1520,7 @@ func (a *ActivityLog) HandleEndOfMonth(ctx context.Context, currentTime time.Tim
 	a.fragmentLock.Unlock()
 
 	// Work on precomputed queries in background
-	go a.precomputedQueryWorker(ctx)
+	go a.precomputedQueryWorker(ctx, nil)
 
 	return nil
 }
@@ -1581,6 +1690,7 @@ type ResponseCounts struct {
 	NonEntityClients int `json:"non_entity_clients" mapstructure:"non_entity_clients"`
 	Clients          int `json:"clients"`
 	SecretSyncs      int `json:"secret_syncs" mapstructure:"secret_syncs"`
+	ACMEClients      int `json:"acme_clients" mapstructure:"acme_clients"`
 }
 
 // Add adds the new record's counts to the existing record
@@ -1593,6 +1703,7 @@ func (r *ResponseCounts) Add(newRecord *ResponseCounts) {
 	r.DistinctEntities += newRecord.DistinctEntities
 	r.NonEntityClients += newRecord.NonEntityClients
 	r.NonEntityTokens += newRecord.NonEntityTokens
+	r.ACMEClients += newRecord.ACMEClients
 	r.SecretSyncs += newRecord.SecretSyncs
 }
 
@@ -1902,7 +2013,7 @@ func defaultActivityConfig() activityConfig {
 	}
 }
 
-func (a *ActivityLog) loadConfigOrDefault(ctx context.Context, isReportingEnabled bool) (activityConfig, error) {
+func (a *ActivityLog) loadConfigOrDefault(ctx context.Context) (activityConfig, error) {
 	// Load from storage
 	var config activityConfig
 	configRaw, err := a.view.Get(ctx, activityConfigKey)
@@ -1916,34 +2027,26 @@ func (a *ActivityLog) loadConfigOrDefault(ctx context.Context, isReportingEnable
 	if err := configRaw.DecodeJSON(&config); err != nil {
 		return config, err
 	}
-
-	// check if the retention time is lesser than the default when reporting is enabled
-	if (config.RetentionMonths < ActivityLogMinimumRetentionMonths) && isReportingEnabled {
-		updatedConfig, err := a.setDefaultRetentionMonthsInConfig(ctx, config)
-		if err != nil {
-			return config, err
-		}
-		return updatedConfig, nil
-	}
 	return config, nil
 }
 
 // setDefaultRetentionMonthsInConfig sets the retention months in activity config with default value.
 // This supports upgrades from versions prior to set the new default ActivityLogMinimumRetentionMonths.
 func (a *ActivityLog) setDefaultRetentionMonthsInConfig(ctx context.Context, inputConfig activityConfig) (activityConfig, error) {
+	if a.core.perfStandby {
+		return inputConfig, nil
+	}
+
 	inputConfig.RetentionMonths = ActivityLogMinimumRetentionMonths
 
 	// Store the config
-	entry, err := logical.StorageEntryJSON(path.Join(activitySubPath, activityConfigKey), inputConfig)
+	entry, err := logical.StorageEntryJSON(activityConfigKey, inputConfig)
 	if err != nil {
 		return inputConfig, err
 	}
 	if err := a.view.Put(ctx, entry); err != nil {
 		return inputConfig, err
 	}
-
-	// Set the new config on the activity log
-	a.SetConfig(ctx, inputConfig)
 	return inputConfig, nil
 }
 
@@ -2070,6 +2173,7 @@ func (p *processCounts) toCountsRecord() *activity.CountsRecord {
 	return &activity.CountsRecord{
 		EntityClients:    p.countByType(entityActivityType),
 		NonEntityClients: p.countByType(nonEntityTokenActivityType),
+		ACMEClients:      p.countByType(ACMEActivityType),
 		SecretSyncs:      p.countByType(secretSyncActivityType),
 	}
 }
@@ -2080,7 +2184,7 @@ func (p *processCounts) toCountsRecord() *activity.CountsRecord {
 func (p *processCounts) countByType(typ string) int {
 	switch typ {
 	case nonEntityTokenActivityType:
-		return len(p.ClientsByType[nonEntityTokenActivityType]) + int(p.Tokens) + len(p.ClientsByType[ACMEActivityType])
+		return len(p.ClientsByType[nonEntityTokenActivityType]) + int(p.Tokens)
 	}
 	return len(p.ClientsByType[typ])
 }
@@ -2088,17 +2192,6 @@ func (p *processCounts) countByType(typ string) int {
 // clientsByType returns the set of client IDs with the given type.
 // ACME clients are included in the non entity results
 func (p *processCounts) clientsByType(typ string) clientIDSet {
-	switch typ {
-	case nonEntityTokenActivityType:
-		clients := make(clientIDSet)
-		for c := range p.ClientsByType[nonEntityTokenActivityType] {
-			clients[c] = struct{}{}
-		}
-		for c := range p.ClientsByType[ACMEActivityType] {
-			clients[c] = struct{}{}
-		}
-		return clients
-	}
 	return p.ClientsByType[typ]
 }
 
@@ -2379,6 +2472,7 @@ func (a *ActivityLog) reportPrecomputedQueryMetrics(ctx context.Context, segment
 				},
 			)
 			summedMetricsMonthly[secretSyncActivityType] += entry.Counts.countByType(secretSyncActivityType)
+			summedMetricsMonthly[ACMEActivityType] += entry.Counts.countByType(ACMEActivityType)
 		case opts.activePeriodStart:
 			a.metrics.SetGaugeWithLabels(
 				[]string{"identity", "entity", "active", "reporting_period"},
@@ -2395,21 +2489,26 @@ func (a *ActivityLog) reportPrecomputedQueryMetrics(ctx context.Context, segment
 				},
 			)
 			summedMetricsReporting[secretSyncActivityType] += entry.Counts.countByType(secretSyncActivityType)
+			summedMetricsReporting[ACMEActivityType] += entry.Counts.countByType(ACMEActivityType)
 		}
 	}
 
-	for clientType, count := range summedMetricsMonthly {
-		a.metrics.SetGauge([]string{"identity", strings.ReplaceAll(clientType, "-", "_"), "active", "monthly"}, float32(count))
+	for ct, count := range summedMetricsMonthly {
+		a.metrics.SetGauge([]string{"identity", strings.ReplaceAll(ct, "-", "_"), "active", "monthly"}, float32(count))
 	}
-	for clientType, count := range summedMetricsReporting {
-		a.metrics.SetGauge([]string{"identity", strings.ReplaceAll(clientType, "-", "_"), "active", "reporting_period"}, float32(count))
+	for ct, count := range summedMetricsReporting {
+		a.metrics.SetGauge([]string{"identity", strings.ReplaceAll(ct, "-", "_"), "active", "reporting_period"}, float32(count))
 	}
 }
+
+var previousMonthNotFoundErr = errors.New("previous month not found")
 
 // goroutine to process the request in the intent log, creating precomputed queries.
 // We expect the return value won't be checked, so log errors as they occur
 // (but for unit testing having the error return should help.)
-func (a *ActivityLog) precomputedQueryWorker(ctx context.Context) error {
+// If the intent log that's passed into the function is non-nil, we use that
+// intent log. Otherwise, we read the intent log from storage
+func (a *ActivityLog) precomputedQueryWorker(ctx context.Context, intent *ActivityIntentLog) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -2430,21 +2529,39 @@ func (a *ActivityLog) precomputedQueryWorker(ctx context.Context) error {
 	}(a.doneCh)
 	a.l.RUnlock()
 
-	// Load the intent log
-	rawIntentLog, err := a.view.Get(ctx, activityIntentLogKey)
-	if err != nil {
-		a.logger.Warn("could not load intent log", "error", err)
-		return err
+	strictEnforcement := intent == nil
+	shouldCleanupIntentLog := false
+	if intent == nil {
+
+		// Load the intent log
+		rawIntentLog, err := a.view.Get(ctx, activityIntentLogKey)
+		if err != nil {
+			a.logger.Warn("could not load intent log", "error", err)
+			return err
+		}
+		if rawIntentLog == nil {
+			a.logger.Trace("no intent log found")
+			return err
+		}
+		intent = new(ActivityIntentLog)
+		err = json.Unmarshal(rawIntentLog.Value, intent)
+		if err != nil {
+			a.logger.Warn("could not parse intent log", "error", err)
+			return err
+		}
+		shouldCleanupIntentLog = true
 	}
-	if rawIntentLog == nil {
-		a.logger.Trace("no intent log found")
-		return err
-	}
-	var intent ActivityIntentLog
-	err = json.Unmarshal(rawIntentLog.Value, &intent)
-	if err != nil {
-		a.logger.Warn("could not parse intent log", "error", err)
-		return err
+
+	cleanupIntentLog := func() {
+		if !shouldCleanupIntentLog {
+			return
+		}
+		// delete the intent log
+		// this should happen if the precomputed queries were generated
+		// successfully (i.e. err is nil) or if there's no data for the previous
+		// month.
+		// It should not happen in the general error case
+		a.view.Delete(ctx, activityIntentLogKey)
 	}
 
 	// currentMonth could change (from another month end) after we release the lock.
@@ -2457,29 +2574,30 @@ func (a *ActivityLog) precomputedQueryWorker(ctx context.Context) error {
 	// would work but this will be easier to control in tests.
 	retentionWindow := timeutil.MonthsPreviousTo(a.retentionMonths, time.Unix(intent.NextMonth, 0).UTC())
 	a.l.RUnlock()
-	if currentMonth != 0 && intent.NextMonth != currentMonth {
+	if strictEnforcement && currentMonth != 0 && intent.NextMonth != currentMonth {
 		a.logger.Warn("intent log does not match current segment",
 			"intent", intent.NextMonth, "current", currentMonth)
 		return errors.New("intent log is too far in the past")
 	}
 
 	lastMonth := intent.PreviousMonth
-	a.logger.Info("computing queries", "month", time.Unix(lastMonth, 0).UTC())
+	lastMonthTime := time.Unix(lastMonth, 0).UTC()
+	a.logger.Info("computing queries", "month", lastMonthTime)
 
-	times, err := a.availableLogs(ctx)
+	times, err := a.availableLogs(ctx, lastMonthTime)
 	if err != nil {
 		a.logger.Warn("could not list available logs", "error", err)
 		return err
 	}
 	if len(times) == 0 {
 		a.logger.Warn("no months in storage")
-		a.view.Delete(ctx, activityIntentLogKey)
-		return errors.New("previous month not found")
+		cleanupIntentLog()
+		return previousMonthNotFoundErr
 	}
 	if times[0].Unix() != lastMonth {
 		a.logger.Warn("last month not in storage", "latest", times[0].Unix())
-		a.view.Delete(ctx, activityIntentLogKey)
-		return errors.New("previous month not found")
+		cleanupIntentLog()
+		return previousMonthNotFoundErr
 	}
 
 	byNamespace := make(map[string]*processByNamespace)
@@ -2503,7 +2621,7 @@ func (a *ActivityLog) precomputedQueryWorker(ctx context.Context) error {
 	for _, startTime := range times {
 		// Do not work back further than the current retention window,
 		// which will just get deleted anyway.
-		if startTime.Before(retentionWindow) {
+		if startTime.Before(retentionWindow) && strictEnforcement {
 			break
 		}
 		reader, err := a.NewSegmentFileReader(ctx, startTime)
@@ -2515,9 +2633,7 @@ func (a *ActivityLog) precomputedQueryWorker(ctx context.Context) error {
 			return err
 		}
 	}
-
-	// delete the intent log
-	a.view.Delete(ctx, activityIntentLogKey)
+	cleanupIntentLog()
 
 	a.logger.Info("finished computing queries", "month", endTime)
 
@@ -2557,7 +2673,7 @@ func (a *ActivityLog) retentionWorker(ctx context.Context, currentTime time.Time
 	// everything >= the threshold is OK
 	retentionThreshold := timeutil.MonthsPreviousTo(retentionMonths, currentTime)
 
-	available, err := a.availableLogs(ctx)
+	available, err := a.availableLogs(ctx, retentionThreshold)
 	if err != nil {
 		a.logger.Warn("could not list segments", "error", err)
 		return err
@@ -2827,6 +2943,7 @@ func (a *ActivityLog) partialMonthClientCount(ctx context.Context) (map[string]i
 	responseData["non_entity_clients"] = totalCounts.NonEntityClients
 	responseData["clients"] = totalCounts.Clients
 	responseData["secret_syncs"] = totalCounts.SecretSyncs
+	responseData["acme_clients"] = totalCounts.ACMEClients
 
 	// The partialMonthClientCount should not have more than one month worth of data.
 	// If it does, something has gone wrong and we should warn that the activity log data
@@ -2869,7 +2986,7 @@ func (a *ActivityLog) writeExport(ctx context.Context, rw http.ResponseWriter, f
 	// Find the months with activity log data that are between the start and end
 	// months. We want to walk this in cronological order so the oldest instance of a
 	// client usage is recorded, not the most recent.
-	times, err := a.availableLogs(ctx)
+	times, err := a.availableLogs(ctx, endTime)
 	if err != nil {
 		a.logger.Warn("failed to list available log segments", "error", err)
 		return fmt.Errorf("failed to list available log segments: %w", err)

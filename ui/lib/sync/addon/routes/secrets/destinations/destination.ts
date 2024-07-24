@@ -4,7 +4,7 @@
  */
 
 import Route from '@ember/routing/route';
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 
 import type Store from '@ember-data/store';
 import type RouterService from '@ember/routing/router-service';
@@ -36,8 +36,6 @@ export default class SyncSecretsDestinationsDestinationRoute extends Route {
     const routes = [`${baseRoute}.edit`, `${baseRoute}.sync`];
     const toRoute = transition.to?.name;
     if (toRoute && routes.includes(toRoute) && model.purgeInitiatedAt) {
-      // const target = transition.to.name.
-      // this.flashMessages.info('Actions are ')
       const action = transition.to?.localName === 'edit' ? 'Editing a destination' : 'Syncing secrets';
       this.flashMessages.info(`${action} is not permitted once a purge has been initiated.`);
       this.router.replaceWith('vault.cluster.sync.secrets.destinations.destination.secrets');

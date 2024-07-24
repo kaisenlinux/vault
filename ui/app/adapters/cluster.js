@@ -4,7 +4,7 @@
  */
 
 import AdapterError from '@ember-data/adapter/error';
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 import { hash, resolve } from 'rsvp';
 import { assert } from '@ember/debug';
 import { pluralize } from 'ember-inflector';
@@ -169,7 +169,7 @@ export default ApplicationAdapter.extend({
   urlFor(endpoint) {
     if (!ENDPOINTS.includes(endpoint)) {
       throw new Error(
-        `Calls to a ${endpoint} endpoint are not currently allowed in the vault cluster adapater`
+        `Calls to a ${endpoint} endpoint are not currently allowed in the vault cluster adapter`
       );
     }
     return `${this.buildURL()}/${endpoint}`;

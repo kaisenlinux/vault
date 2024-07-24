@@ -4,7 +4,7 @@
  */
 
 import Component from '@glimmer/component';
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 import { tracked } from '@glimmer/tracking';
 import { later } from '@ember/runloop';
 import { task } from 'ember-concurrency';
@@ -46,6 +46,7 @@ export default class TokenExpireWarning extends Component {
     if ('vault.cluster.oidc-provider' === currentRoute) {
       return false;
     }
+
     return !!this.args.expirationDate;
   }
 }

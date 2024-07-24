@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BUSL-1.1
  */
 
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 import Controller from '@ember/controller';
 import ListController from 'core/mixins/list-controller';
 
@@ -24,7 +24,7 @@ export default Controller.extend(ListController, {
 
   actions: {
     delete(model) {
-      const type = model.get('identityType');
+      const type = model.identityType;
       const id = model.id;
       return model
         .destroyRecord()
@@ -41,8 +41,8 @@ export default Controller.extend(ListController, {
     },
 
     toggleDisabled(model) {
-      const action = model.get('disabled') ? ['enabled', 'enabling'] : ['disabled', 'disabling'];
-      const type = model.get('identityType');
+      const action = model.disabled ? ['enabled', 'enabling'] : ['disabled', 'disabling'];
+      const type = model.identityType;
       const id = model.id;
       model.toggleProperty('disabled');
 

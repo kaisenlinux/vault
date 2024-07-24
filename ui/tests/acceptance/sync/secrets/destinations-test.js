@@ -15,7 +15,8 @@ import { syncDestinations } from 'vault/helpers/sync-destinations';
 
 const SYNC_DESTINATIONS = syncDestinations();
 
-module('Acceptance | enterprise | sync | destinations', function (hooks) {
+// sync is an enterprise feature but since mirage is used the enterprise label has been intentionally omitted from the module name
+module('Acceptance | sync | destinations (plural)', function (hooks) {
   setupApplicationTest(hooks);
   setupMirage(hooks);
 

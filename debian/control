@@ -4,12 +4,12 @@ Priority: optional
 Maintainer: Kevin Chevreuil - Kaisen <kaisen@kaisenlinux.org>
 Build-Depends: debhelper-compat (= 13),
 	       dh-golang,
-	       golang-go (>= 1.21.9),
+	       golang-go (>= 1.22.2),
 	       golang-golang-x-tools,
 	       golang-github-enumer,
 	       gox (>= 1.0.1-1kaisen),
 	       npm,
-	       nodejs (<< 19), nodejs (>= 18),
+	       nodejs (<< 21), nodejs (>= 20),
 Standards-Version: 4.6.0
 Homepage: https://www.vaultproject.io/
 Vcs-Browser: https://gitlab.com/kaisenlinux/packages/vault
@@ -18,6 +18,6 @@ Rules-Requires-Root: no
 XS-Go-Import-Path: github.com/hashicorp/vault
 
 Package: vault
-Architecture: amd64 arm64 i386
+Architecture: amd64 arm64
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: A tool for secrets management, encryption as a service, and privileged access management

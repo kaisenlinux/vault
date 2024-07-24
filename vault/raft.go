@@ -149,9 +149,10 @@ func (c *Core) startRaftBackend(ctx context.Context) (retErr error) {
 		raftBackend.SetRestoreCallback(c.raftSnapshotRestoreCallback(true, true))
 
 		if err := raftBackend.SetupCluster(ctx, raft.SetupOpts{
-			TLSKeyring:      raftTLS,
-			ClusterListener: c.getClusterListener(),
-			StartAsLeader:   creating,
+			TLSKeyring:          raftTLS,
+			ClusterListener:     c.getClusterListener(),
+			StartAsLeader:       creating,
+			EffectiveSDKVersion: c.effectiveSDKVersion,
 		}); err != nil {
 			return err
 		}
@@ -309,7 +310,6 @@ func (c *Core) setupRaftActiveNode(ctx context.Context) error {
 	}
 
 	c.logger.Info("starting raft active node")
-	raftBackend.SetEffectiveSDKVersion(c.effectiveSDKVersion)
 
 	c.pendingRaftPeers = &sync.Map{}
 
@@ -848,6 +848,10 @@ func (c *Core) raftSnapshotRestoreCallback(grabLock bool, sealNode bool) func(co
 			c.logger.Info("failed to perform TLS key upgrades, sealing", "error", err)
 			return err
 		}
+
+		// Reset the namespace cache so that any namespaces cached
+		// before the snapshot restore will no longer be present.
+		c.resetNamespaceCache()
 
 		return nil
 	}

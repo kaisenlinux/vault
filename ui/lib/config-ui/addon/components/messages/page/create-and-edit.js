@@ -7,7 +7,7 @@ import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { task, timeout } from 'ember-concurrency';
 import errorMessage from 'vault/utils/error-message';
-import { inject as service } from '@ember/service';
+import { service } from '@ember/service';
 import { action } from '@ember/object';
 import Ember from 'ember';
 import { isAfter } from 'date-fns';
@@ -37,12 +37,12 @@ export default class MessagesList extends Component {
   @tracked userConfirmation = '';
 
   willDestroy() {
-    super.willDestroy();
     const noTeardown = this.store && !this.store.isDestroying;
     const { model } = this;
-    if (noTeardown && model && model.get('isDirty') && !model.isDestroyed && !model.isDestroying) {
+    if (noTeardown && model && model.isDirty && !model.isDestroyed && !model.isDestroying) {
       model.rollbackAttributes();
     }
+    super.willDestroy();
   }
 
   validate() {
