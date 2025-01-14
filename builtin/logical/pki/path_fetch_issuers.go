@@ -529,6 +529,8 @@ func (b *backend) pathUpdateIssuer(ctx context.Context, req *logical.Request, da
 	switch rawLeafBehavior {
 	case "err":
 		newLeafBehavior = certutil.ErrNotAfterBehavior
+	case "always_enforce_err":
+		newLeafBehavior = certutil.AlwaysEnforceErr
 	case "truncate":
 		newLeafBehavior = certutil.TruncateNotAfterBehavior
 	case "permit":
@@ -797,6 +799,8 @@ func (b *backend) pathPatchIssuer(ctx context.Context, req *logical.Request, dat
 		switch rawLeafBehavior {
 		case "err":
 			newLeafBehavior = certutil.ErrNotAfterBehavior
+		case "always_enforce_err":
+			newLeafBehavior = certutil.AlwaysEnforceErr
 		case "truncate":
 			newLeafBehavior = certutil.TruncateNotAfterBehavior
 		case "permit":
@@ -894,7 +898,7 @@ func (b *backend) pathPatchIssuer(ctx context.Context, req *logical.Request, dat
 	if enableTemplatingRaw, ok := data.GetOk("enable_aia_url_templating"); ok {
 		enableTemplating := enableTemplatingRaw.(bool)
 		if enableTemplating != issuer.AIAURIs.EnableTemplating {
-			issuer.AIAURIs.EnableTemplating = true
+			issuer.AIAURIs.EnableTemplating = enableTemplating
 			modified = true
 		}
 	}
@@ -1121,7 +1125,7 @@ func (b *backend) pathDeleteIssuer(ctx context.Context, req *logical.Request, da
 	// Finally, we need to rebuild both the local and the unified CRLs. This
 	// will free up any now unnecessary space used in both the CRL config
 	// and for the underlying CRL.
-	warnings, err := b.CrlBuilder().rebuild(sc, true)
+	warnings, err := b.CrlBuilder().Rebuild(sc, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1231,7 +1235,7 @@ func (b *backend) pathGetIssuerCRL(ctx context.Context, req *logical.Request, da
 	}
 
 	sc := b.makeStorageContext(ctx, req.Storage)
-	warnings, err := b.CrlBuilder().rebuildIfForced(sc)
+	warnings, err := b.CrlBuilder().RebuildIfForced(sc)
 	if err != nil {
 		return nil, err
 	}
@@ -1271,7 +1275,7 @@ func (b *backend) pathGetIssuerCRL(ctx context.Context, req *logical.Request, da
 		return response, nil
 	}
 
-	crlPath, err := sc.resolveIssuerCRLPath(issuerName, isUnified)
+	crlPath, err := issuing.ResolveIssuerCRLPath(sc.GetContext(), sc.GetStorage(), sc.UseLegacyBundleCaStorage(), issuerName, isUnified)
 	if err != nil {
 		return nil, err
 	}

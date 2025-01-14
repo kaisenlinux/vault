@@ -22,6 +22,7 @@ export default Component.extend(FocusOnInsertMixin, {
   onDataChange() {},
   onRefresh() {},
   key: null,
+  errorMessage: '',
   autoRotateInvalid: false,
   requestInFlight: or('key.isLoading', 'key.isReloading', 'key.isSaving'),
 
@@ -60,10 +61,10 @@ export default Component.extend(FocusOnInsertMixin, {
           models: [this.key.backend, this.key.id],
           query: { tab: 'details' },
         },
-        { label: 'edit' },
+        { label: 'Edit' },
       ];
     } else if (this.mode === 'create') {
-      return [...baseCrumbs, { label: 'create' }];
+      return [...baseCrumbs, { label: 'Create' }];
     }
     return baseCrumbs;
   },
@@ -104,11 +105,14 @@ export default Component.extend(FocusOnInsertMixin, {
   actions: {
     createOrUpdateKey(type, event) {
       event.preventDefault();
+      // reset error message
+      set(this, 'errorMessage', '');
 
       const keyId = this.key.id || this.key.name;
-      // prevent from submitting if there's no key
-      // maybe do something fancier later
+
       if (type === 'create' && isBlank(keyId)) {
+        // manually set error message
+        set(this, 'errorMessage', 'Name is required.');
         return;
       }
 

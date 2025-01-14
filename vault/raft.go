@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,16 +16,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/go-discover"
 	discoverk8s "github.com/hashicorp/go-discover/provider/k8s"
 	"github.com/hashicorp/go-hclog"
-	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	"github.com/hashicorp/go-secure-stdlib/tlsutil"
 	"github.com/hashicorp/go-uuid"
 	goversion "github.com/hashicorp/go-version"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/hashicorp/vault/api"
+	httpPriority "github.com/hashicorp/vault/http/priority"
 	"github.com/hashicorp/vault/physical/raft"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -34,6 +35,9 @@ import (
 )
 
 const (
+	RaftInitialChallengeLimit = 20 // allow an initial burst to 20
+	RaftChallengesPerSecond   = 5  // equating to an average 200ms min time
+
 	// undoLogMonitorInterval is how often the leader checks to see
 	// if all the cluster members it knows about are new enough to support
 	// undo logs.
@@ -48,10 +52,17 @@ var (
 	raftTLSStoragePath    = "core/raft/tls"
 	raftTLSRotationPeriod = 24 * time.Hour
 
-	raftAutopilotConfigurationStoragePath = "core/raft/autopilot/configuration"
+	raftAutopilotConfigurationStoragePath  = "core/raft/autopilot/configuration"
+	raftAutopilotPersistedStateStoragePath = "core/raft/autopilot/state"
 
 	ErrJoinWithoutAutoloading = errors.New("attempt to join a cluster using autoloaded licenses while not using autoloading ourself")
 )
+
+type raftBootstrapChallenge struct {
+	serverID  string
+	answer    []byte // the random answer
+	challenge []byte // the Sealed answer
+}
 
 // GetRaftNodeID returns the raft node ID if there is one, or an empty string if there's not
 func (c *Core) GetRaftNodeID() string {
@@ -311,7 +322,11 @@ func (c *Core) setupRaftActiveNode(ctx context.Context) error {
 
 	c.logger.Info("starting raft active node")
 
-	c.pendingRaftPeers = &sync.Map{}
+	var err error
+	c.pendingRaftPeers, err = lru.New[string, *raftBootstrapChallenge](RaftInitialChallengeLimit)
+	if err != nil {
+		return err
+	}
 
 	// Reload the raft TLS keys to ensure we are using the latest version.
 	if err := c.checkRaftTLSKeyUpgrades(ctx); err != nil {
@@ -338,8 +353,40 @@ func (c *Core) setupRaftActiveNode(ctx context.Context) error {
 		c.logger.Error("failed to load autopilot config from storage when setting up cluster; continuing since autopilot falls back to default config", "error", err)
 	}
 	disableAutopilot := c.disableAutopilot
-	raftBackend.SetupAutopilot(c.activeContext, autopilotConfig, c.raftFollowerStates, disableAutopilot)
+	persistedState, err := c.autopilotPersistedState()
+	if err != nil {
+		c.logger.Error("failed to load autopilot persisted state from storage", "error", err)
+	}
+	raftBackend.SetupAutopilot(c.activeContext, &raft.AutopilotSetupOptions{
+		StorageConfig:       autopilotConfig,
+		FollowerStates:      c.raftFollowerStates,
+		Disable:             disableAutopilot,
+		PersistedStates:     persistedState,
+		SavePersistedStates: c.saveAutopilotPersistedState,
+	})
 	return nil
+}
+
+func (c *Core) autopilotPersistedState() (map[string]raft.PersistedFollowerState, error) {
+	entry, err := c.barrier.Get(c.activeContext, raftAutopilotPersistedStateStoragePath)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]raft.PersistedFollowerState
+	if entry == nil {
+		return m, nil
+	}
+
+	err = entry.DecodeJSON(&m)
+	return m, err
+}
+
+func (c *Core) saveAutopilotPersistedState(states map[string]raft.PersistedFollowerState) error {
+	entry, err := logical.StorageEntryJSON(raftAutopilotPersistedStateStoragePath, states)
+	if err != nil {
+		return err
+	}
+	return c.barrier.Put(httpPriority.ContextWithRequestPriority(c.activeContext, httpPriority.NeverDrop), entry)
 }
 
 func (c *Core) stopRaftActiveNode() {
@@ -974,13 +1021,8 @@ func (c *Core) getRaftChallenge(leaderInfo *raft.LeaderJoinInfo) (*raftInformati
 		return nil, fmt.Errorf("error decoding raft bootstrap challenge: %w", err)
 	}
 
-	eBlob := &wrapping.BlobInfo{}
-	if err := proto.Unmarshal(challengeRaw, eBlob); err != nil {
-		return nil, fmt.Errorf("error decoding raft bootstrap challenge: %w", err)
-	}
-
 	return &raftInformation{
-		challenge:           eBlob,
+		challenge:           challengeRaw,
 		leaderClient:        apiClient,
 		leaderBarrierConfig: &sealConfig,
 	}, nil
@@ -1231,17 +1273,15 @@ func (c *Core) raftLeaderInfo(leaderInfo *raft.LeaderJoinInfo, disco *discover.D
 			// default to 8200 when no port is provided
 			port = 8200
 		}
-		// Addrs returns either IPv4 or IPv6 address, without scheme or port
+		// Addrs returns either IPv4 or IPv6 address, without scheme and most of them without port
+		// IPv6 can be explicit such as "[::1]" or implicit "::1"
 		clusterIPs, err := disco.Addrs(leaderInfo.AutoJoin, c.logger.StandardLogger(nil))
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse addresses from auto-join metadata: %w", err)
 		}
 		for _, ip := range clusterIPs {
-			if strings.Count(ip, ":") >= 2 && !strings.HasPrefix(ip, "[") {
-				// An IPv6 address in implicit form, however we need it in explicit form to use in a URL.
-				ip = fmt.Sprintf("[%s]", ip)
-			}
-			u := fmt.Sprintf("%s://%s:%d", scheme, ip, port)
+			addr := formatDiscoveredAddr(ip, port)
+			u := fmt.Sprintf("%s://%s", scheme, addr)
 			info := *leaderInfo
 			info.LeaderAPIAddr = u
 			ret = append(ret, &info)
@@ -1255,7 +1295,11 @@ func (c *Core) raftLeaderInfo(leaderInfo *raft.LeaderJoinInfo, disco *discover.D
 
 // NewDelegateForCore creates a raft.Delegate for the specified core using its backend.
 func NewDelegateForCore(c *Core) *raft.Delegate {
-	return raft.NewDelegate(c.getRaftBackend())
+	persistedState, err := c.autopilotPersistedState()
+	if err != nil {
+		c.logger.Error("failed to load autopilot persisted state from storage", "error", err)
+	}
+	return raft.NewDelegate(c.getRaftBackend(), persistedState, c.saveAutopilotPersistedState)
 }
 
 // getRaftBackend returns the RaftBackend from the HA or physical backend,
@@ -1296,15 +1340,6 @@ func (c *Core) joinRaftSendAnswer(ctx context.Context, sealAccess seal.Access, r
 		return errors.New("raft is already initialized")
 	}
 
-	multiWrapValue := &seal.MultiWrapValue{
-		Generation: sealAccess.Generation(),
-		Slots:      []*wrapping.BlobInfo{raftInfo.challenge},
-	}
-	plaintext, _, err := sealAccess.Decrypt(ctx, multiWrapValue, nil)
-	if err != nil {
-		return fmt.Errorf("error decrypting challenge: %w", err)
-	}
-
 	parsedClusterAddr, err := url.Parse(c.ClusterAddr())
 	if err != nil {
 		return fmt.Errorf("error parsing cluster address: %w", err)
@@ -1320,12 +1355,20 @@ func (c *Core) joinRaftSendAnswer(ctx context.Context, sealAccess seal.Access, r
 		}
 	}
 
+	sealer := NewSealAccessSealer(sealAccess, c.logger, "bootstrap_challenge_read")
+	plaintext, err := sealer.Open(context.Background(), raftInfo.challenge)
+	if err != nil {
+		return fmt.Errorf("error decrypting challenge: %w", err)
+	}
+
 	answerReq := raftInfo.leaderClient.NewRequest("PUT", "/v1/sys/storage/raft/bootstrap/answer")
 	if err := answerReq.SetJSONBody(map[string]interface{}{
-		"answer":       base64.StdEncoding.EncodeToString(plaintext),
-		"cluster_addr": clusterAddr,
-		"server_id":    raftBackend.NodeID(),
-		"non_voter":    raftInfo.nonVoter,
+		"answer":          base64.StdEncoding.EncodeToString(plaintext),
+		"cluster_addr":    clusterAddr,
+		"server_id":       raftBackend.NodeID(),
+		"non_voter":       raftInfo.nonVoter,
+		"sdk_version":     raftBackend.SDKVersion(),
+		"upgrade_version": raftBackend.UpgradeVersion(),
 	}); err != nil {
 		return err
 	}
@@ -1462,4 +1505,20 @@ func newDiscover() (*discover.Discover, error) {
 	return discover.New(
 		discover.WithProviders(providers),
 	)
+}
+
+// formatDiscoveredAddr joins ip and port if addr does not already contain a port
+func formatDiscoveredAddr(addr string, defaultPort uint) string {
+	// addr is an implicit IPv6 address
+	if !strings.HasPrefix(addr, "[") && strings.Count(addr, ":") > 1 {
+		return fmt.Sprintf("[%s]:%d", addr, defaultPort)
+	}
+	ip, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Sprintf("%s:%d", addr, defaultPort)
+	}
+	if strings.ContainsRune(ip, ':') {
+		ip = fmt.Sprintf("[%s]", ip)
+	}
+	return fmt.Sprintf("%s:%s", ip, port)
 }

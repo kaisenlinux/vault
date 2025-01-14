@@ -115,6 +115,10 @@ globals {
       Vault running in Agent mode uses templates to create log output.
     EOF
 
+    verify_log_secrets = <<-EOF
+      Verify that the vault audit log and systemd journal do not leak secret values.
+    EOF
+
     verify_raft_cluster_all_nodes_are_voters = <<-EOF
       When configured with a 'backend:raft' variant, verify that all nodes in the cluster are
       healthy and are voters.
@@ -124,12 +128,6 @@ globals {
       Wait for the Autopilot to upgrade the entire Vault cluster and ensure that the target version
       matches the candidate version. Ensure that the cluster reaches an upgrade state of
       'await-server-removal'.
-    EOF
-
-    verify_read_test_data = <<-EOF
-      Verify that we are able to read test data we've written in prior steps. This includes:
-        - Auth user policies
-        - Kv data
     EOF
 
     verify_replication_status = <<-EOF
@@ -163,12 +161,22 @@ globals {
       Vault's reported seal type matches our configuration.
     EOF
 
-    verify_write_test_data = <<-EOF
-      Verify that vault is capable mounting engines and writing data to them. These currently include:
-        - Mount the auth engine
-        - Mount the kv engine
-        - Write auth user policies
-        - Write kv data
+    verify_secrets_engines_create = <<-EOF
+      Verify that Vault is capable mounting, configuring, and using various secrets engines and auth
+      methods. These currently include:
+        - v1/auth/userpass/*
+        - v1/identity/*
+        - v1/kv/*
+        - v1/sys/policy/*
+    EOF
+
+    verify_secrets_engines_read = <<-EOF
+      Verify that data that we've created previously is still valid, consistent, and duarable.
+      This includes:
+        - v1/auth/userpass/*
+        - v1/identity/*
+        - v1/kv/*
+        - v1/sys/policy/*
     EOF
 
     verify_ui = <<-EOF
@@ -192,5 +200,10 @@ globals {
     wait_for_seal_rewrap = <<-EOF
       Wait for the Vault cluster seal rewrap process to complete.
     EOF
+
+    verify_billing_start_date = <<-EOF
+      Verify that the billing start date has successfully rolled over to the latest billing year if needed.
+    EOF
+
   }
 }

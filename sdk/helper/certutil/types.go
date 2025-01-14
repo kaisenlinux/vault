@@ -708,9 +708,11 @@ const (
 	ErrNotAfterBehavior NotAfterBehavior = iota
 	TruncateNotAfterBehavior
 	PermitNotAfterBehavior
+	AlwaysEnforceErr
 )
 
 var notAfterBehaviorNames = map[NotAfterBehavior]string{
+	AlwaysEnforceErr:         "always_enforce_err",
 	ErrNotAfterBehavior:      "err",
 	TruncateNotAfterBehavior: "truncate",
 	PermitNotAfterBehavior:   "permit",
@@ -819,6 +821,11 @@ type CreationParameters struct {
 
 	// The explicit SKID to use; especially useful for cross-signing.
 	SKID []byte
+
+	// Ignore validating the CSR's signature. This should only be enabled if the
+	// sender of the CSR has proven proof of possession of the associated
+	// private key by some other means, otherwise keep this set to false.
+	IgnoreCSRSignature bool
 }
 
 type CreationBundle struct {

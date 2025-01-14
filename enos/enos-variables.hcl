@@ -75,34 +75,34 @@ variable "project_name" {
   default     = "vault-enos-integration"
 }
 
-variable "distro_version_amzn2" {
+variable "distro_version_amzn" {
   description = "The version of Amazon Linux 2 to use"
   type        = string
-  default     = "2"
+  default     = "2023" // or "2", though pkcs11 has not been tested with 2
 }
 
 variable "distro_version_leap" {
   description = "The version of openSUSE leap to use"
   type        = string
-  default     = "15.5"
+  default     = "15.6"
 }
 
 variable "distro_version_rhel" {
   description = "The version of RHEL to use"
   type        = string
-  default     = "9.3" // or "8.9"
+  default     = "9.4" // or "8.10"
 }
 
 variable "distro_version_sles" {
   description = "The version of SUSE SLES to use"
   type        = string
-  default     = "v15_sp5_standard"
+  default     = "15.6"
 }
 
 variable "distro_version_ubuntu" {
   description = "The version of ubuntu to use"
   type        = string
-  default     = "22.04" // or "20.04"
+  default     = "24.04" // or "20.04", "22.04"
 }
 
 variable "tags" {
@@ -188,17 +188,26 @@ variable "vault_product_version" {
   default     = null
 }
 
+variable "vault_radar_license_path" {
+  description = "The license for vault-radar which is used to verify the audit log"
+  type        = string
+  default     = null
+}
+
 variable "vault_revision" {
   description = "The git sha of Vault artifact we are testing"
   type        = string
   default     = null
 }
 
-variable "vault_upgrade_initial_release" {
+variable "vault_upgrade_initial_version" {
   description = "The Vault release to deploy before upgrading"
-  default = {
-    edition = "ce"
-    // Vault 1.10.5 has a known issue with retry_join.
-    version = "1.10.4"
-  }
+  type        = string
+  default     = "1.13.13"
+}
+
+variable "verify_log_secrets" {
+  description = "If true and var.vault_enable_audit_devices is true we'll verify that the audit log does not contain unencrypted secrets. Requires var.vault_radar_license_path to be set to a valid license file."
+  type        = bool
+  default     = false
 }

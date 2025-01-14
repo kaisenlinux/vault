@@ -106,15 +106,15 @@ module('Acceptance | secrets/secret/create, read, delete', function (hooks) {
       await writeSecret(this.backend, secretPath, 'foo', 'bar');
       assert.strictEqual(
         currentRouteName(),
-        'vault.cluster.secrets.backend.kv.secret.details.index',
-        'redirects to the show page'
+        'vault.cluster.secrets.backend.kv.secret.index',
+        'redirects to the overview page'
       );
-      assert.dom(PAGE.detail.createNewVersion).exists('shows the edit button');
     });
     test('it navigates to version history and to a specific version', async function (assert) {
       assert.expect(4);
       const secretPath = `specific-version`;
       await writeVersionedSecret(this.backend, secretPath, 'foo', 'bar', 4);
+      await click(PAGE.secretTab('Secret'));
       assert
         .dom(PAGE.detail.versionTimestamp)
         .includesText('Version 4 created', 'shows version created time');
@@ -256,7 +256,7 @@ module('Acceptance | secrets/secret/create, read, delete', function (hooks) {
       await deleteEngine(backend, assert);
     });
 
-    test('UI handles secret with % in path correctly', async function (assert) {
+    test('KVv1 handles secret with % in path correctly', async function (assert) {
       const enginePath = this.backend;
       const secretPath = 'per%cent/%fu ll';
       const [firstPath, secondPath] = secretPath.split('/');
