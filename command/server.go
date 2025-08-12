@@ -38,7 +38,6 @@ import (
 	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/go-secure-stdlib/reloadutil"
 	"github.com/hashicorp/vault/audit"
-	config2 "github.com/hashicorp/vault/command/config"
 	"github.com/hashicorp/vault/command/server"
 	"github.com/hashicorp/vault/helper/builtinplugins"
 	"github.com/hashicorp/vault/helper/constants"
@@ -119,6 +118,7 @@ type ServerCommand struct {
 	flagConfigs            []string
 	flagRecovery           bool
 	flagExperiments        []string
+	flagCLIDump            string
 	flagDev                bool
 	flagDevTLS             bool
 	flagDevTLSCertDir      string
@@ -221,6 +221,13 @@ func (c *ServerCommand) Flags() *FlagSets {
 			"Valid experiments are: " + strings.Join(experiments.ValidExperiments(), ", "),
 	})
 
+	f.StringVar(&StringVar{
+		Name:       "pprof-dump-dir",
+		Target:     &c.flagCLIDump,
+		Completion: complete.PredictDirs("*"),
+		Usage:      "Directory where generated profiles are created. If left unset, files are not generated.",
+	})
+
 	f = set.NewFlagSet("Dev Options")
 
 	f.BoolVar(&BoolVar{
@@ -270,11 +277,12 @@ func (c *ServerCommand) Flags() *FlagSets {
 	})
 
 	f.StringVar(&StringVar{
-		Name:    "dev-listen-address",
-		Target:  &c.flagDevListenAddr,
-		Default: "127.0.0.1:8200",
-		EnvVar:  "VAULT_DEV_LISTEN_ADDRESS",
-		Usage:   "Address to bind to in \"dev\" mode.",
+		Name:        "dev-listen-address",
+		Target:      &c.flagDevListenAddr,
+		Default:     "127.0.0.1:8200",
+		EnvVar:      "VAULT_DEV_LISTEN_ADDRESS",
+		Usage:       "Address to bind to in \"dev\" mode.",
+		Normalizers: []func(string) string{configutil.NormalizeAddr},
 	})
 	f.BoolVar(&BoolVar{
 		Name:    "dev-no-store-token",
@@ -411,9 +419,7 @@ func (c *ServerCommand) AutocompleteFlags() complete.Flags {
 }
 
 func (c *ServerCommand) flushLog() {
-	c.logger.(hclog.OutputResettable).ResetOutputWithFlush(&hclog.LoggerOptions{
-		Output: c.logWriter,
-	}, c.logGate)
+	c.logGate.Flush()
 }
 
 func (c *ServerCommand) parseConfig() (*server.Config, []configutil.ConfigError, error) {
@@ -421,9 +427,14 @@ func (c *ServerCommand) parseConfig() (*server.Config, []configutil.ConfigError,
 	// Load the configuration
 	var config *server.Config
 	for _, path := range c.flagConfigs {
-		current, err := server.LoadConfig(path)
+		// TODO (HCL_DUP_KEYS_DEPRECATION): return to server.LoadConfig once deprecation is done
+		current, duplicate, err := server.LoadConfigCheckDuplicate(path)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error loading configuration from %s: %w", path, err)
+		}
+		if duplicate {
+			c.UI.Warn(fmt.Sprintf(
+				"WARNING: Duplicate keys found in the Vault server configuration file %q, duplicate keys in HCL files are deprecated and will be forbidden in a future release.", path))
 		}
 
 		configErrors = append(configErrors, current.Validate(path)...)
@@ -436,10 +447,9 @@ func (c *ServerCommand) parseConfig() (*server.Config, []configutil.ConfigError,
 	}
 
 	if config != nil && config.Entropy != nil && config.Entropy.Mode == configutil.EntropyAugmentation && constants.IsFIPS() {
-		c.UI.Warn("WARNING: Entropy Augmentation is not supported in FIPS 140-2 Inside mode; disabling from server configuration!\n")
+		c.UI.Warn("WARNING: Entropy Augmentation is not supported in FIPS 140-3 Inside mode; disabling from server configuration!\n")
 		config.Entropy = nil
 	}
-
 	entCheckRequestLimiter(c, config)
 
 	return config, configErrors, nil
@@ -506,7 +516,7 @@ func (c *ServerCommand) runRecoveryMode() int {
 	}
 	if config.Storage.Type == storageTypeRaft || (config.HAStorage != nil && config.HAStorage.Type == storageTypeRaft) {
 		if envCA := os.Getenv("VAULT_CLUSTER_ADDR"); envCA != "" {
-			config.ClusterAddr = envCA
+			config.ClusterAddr = configutil.NormalizeAddr(envCA)
 		}
 
 		if len(config.ClusterAddr) == 0 {
@@ -734,9 +744,9 @@ func (c *ServerCommand) runRecoveryMode() int {
 func logProxyEnvironmentVariables(logger hclog.Logger) {
 	proxyCfg := httpproxy.FromEnvironment()
 	cfgMap := map[string]string{
-		"http_proxy":  proxyCfg.HTTPProxy,
-		"https_proxy": proxyCfg.HTTPSProxy,
-		"no_proxy":    proxyCfg.NoProxy,
+		"http_proxy":  configutil.NormalizeAddr(proxyCfg.HTTPProxy),
+		"https_proxy": configutil.NormalizeAddr(proxyCfg.HTTPSProxy),
+		"no_proxy":    configutil.NormalizeAddr(proxyCfg.NoProxy),
 	}
 	for k, v := range cfgMap {
 		u, err := url.Parse(v)
@@ -790,7 +800,7 @@ func (c *ServerCommand) setupStorage(config *server.Config) (physical.Backend, e
 		}
 	case storageTypeRaft:
 		if envCA := os.Getenv("VAULT_CLUSTER_ADDR"); envCA != "" {
-			config.ClusterAddr = envCA
+			config.ClusterAddr = configutil.NormalizeAddr(envCA)
 		}
 		if len(config.ClusterAddr) == 0 {
 			return nil, errors.New("Cluster address must be set when using raft storage")
@@ -1125,13 +1135,38 @@ func (c *ServerCommand) Run(args []string) int {
 
 	logProxyEnvironmentVariables(c.logger)
 
-	if envMlock := os.Getenv("VAULT_DISABLE_MLOCK"); envMlock != "" {
+	envMlock := os.Getenv("VAULT_DISABLE_MLOCK")
+	if envMlock != "" {
 		var err error
 		config.DisableMlock, err = strconv.ParseBool(envMlock)
 		if err != nil {
 			c.UI.Output("Error parsing the environment variable VAULT_DISABLE_MLOCK")
 			return 1
 		}
+	}
+
+	isMlockSet := func() bool {
+		// DisableMlock key has been found and thus explicitly set
+		return strutil.StrListContainsCaseInsensitive(config.SharedConfig.FoundKeys, "DisableMlock") ||
+			// envvar set
+			envMlock != ""
+	}
+
+	// ensure that the DisableMlock key is explicitly set if using integrated storage
+	if !c.flagDev && mlock.Supported() && config.Storage != nil && config.Storage.Type == storageTypeRaft && !isMlockSet() {
+
+		c.UI.Error(wrapAtLength(
+			"ERROR: disable_mlock must be configured 'true' or 'false': Mlock " +
+				"prevents memory from being swapped to disk for security reasons, " +
+				"but can cause Vault on Integrated Storage to run out of memory " +
+				"if the machine was not provisioned with enough RAM. Disabling " +
+				"mlock can prevent this issue, but can result in the reveal of " +
+				"plaintext secrets when memory is swapped to disk, so it is only " +
+				"recommended on systems with encrypted swap or where swap is disabled." +
+				"Prior to Vault 1.20, disable_mlock defaulted to 'false' when the" +
+				"value was not set explicitly.",
+		))
+		return 1
 	}
 
 	if envLicensePath := os.Getenv(EnvVaultLicensePath); envLicensePath != "" {
@@ -1589,6 +1624,11 @@ func (c *ServerCommand) Run(args []string) int {
 		coreShutdownDoneCh = core.ShutdownDone()
 	}
 
+	cliDumpCh := make(chan struct{})
+	if c.flagCLIDump != "" {
+		go func() { cliDumpCh <- struct{}{} }()
+	}
+
 	// Wait for shutdown
 	shutdownTriggered := false
 	retCode := 0
@@ -1624,6 +1664,10 @@ func (c *ServerCommand) Run(args []string) int {
 			// reporting Errors found in the config
 			for _, cErr := range configErrors {
 				c.logger.Warn(cErr.String())
+			}
+
+			if err := core.ReloadRaftConfig(config.Storage.Config); err != nil {
+				c.logger.Warn("error reloading raft config", "error", err.Error())
 			}
 
 			// Note that seal reloading can also be triggered via Core.TriggerSealReload.
@@ -1676,7 +1720,7 @@ func (c *ServerCommand) Run(args []string) int {
 				sr.NotifyConfigurationReload(srConfig)
 			}
 
-			if err := core.ReloadCensusManager(false); err != nil {
+			if err := core.ReloadCensusManager(ctx, false); err != nil {
 				c.UI.Error(err.Error())
 			}
 
@@ -1703,8 +1747,8 @@ func (c *ServerCommand) Run(args []string) int {
 
 			// Notify systemd that the server has completed reloading config
 			c.notifySystemd(systemd.SdNotifyReady)
-
 		case <-c.SigUSR2Ch:
+			c.logger.Info("Received SIGUSR2, dumping goroutines. This is expected behavior. Vault continues to run normally.")
 			logWriter := c.logger.StandardWriter(&hclog.StandardLoggerOptions{})
 			pprof.Lookup("goroutine").WriteTo(logWriter, 2)
 
@@ -1755,6 +1799,51 @@ func (c *ServerCommand) Run(args []string) int {
 			}
 
 			c.logger.Info(fmt.Sprintf("Wrote pprof files to: %s", pprofPath))
+		case <-cliDumpCh:
+			path := c.flagCLIDump
+
+			if _, err := os.Stat(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				c.logger.Error("Checking cli dump path failed", "error", err)
+				continue
+			}
+
+			pprofPath := filepath.Join(path, "vault-pprof")
+			err := os.MkdirAll(pprofPath, os.ModePerm)
+			if err != nil {
+				c.logger.Error("Could not create temporary directory for pprof", "error", err)
+				continue
+			}
+
+			dumps := []string{"goroutine", "heap", "allocs", "threadcreate", "profile"}
+			for _, dump := range dumps {
+				pFile, err := os.Create(filepath.Join(pprofPath, dump))
+				if err != nil {
+					c.logger.Error("error creating pprof file", "name", dump, "error", err)
+					break
+				}
+
+				if dump != "profile" {
+					err = pprof.Lookup(dump).WriteTo(pFile, 0)
+					if err != nil {
+						c.logger.Error("error generating pprof data", "name", dump, "error", err)
+						pFile.Close()
+						break
+					}
+				} else {
+					// CPU profiles need to run for a duration so we're going to run it
+					// just for one second to avoid blocking here.
+					if err := pprof.StartCPUProfile(pFile); err != nil {
+						c.logger.Error("could not start CPU profile: ", err)
+						pFile.Close()
+						break
+					}
+					time.Sleep(time.Second * 1)
+					pprof.StopCPUProfile()
+				}
+				pFile.Close()
+			}
+
+			c.logger.Info(fmt.Sprintf("Wrote startup pprof files to: %s", pprofPath))
 		}
 	}
 	// Notify systemd that the server is shutting down
@@ -1785,7 +1874,9 @@ func (c *ServerCommand) reloadConfigFiles() (*server.Config, []configutil.Config
 	var config *server.Config
 	var configErrors []configutil.ConfigError
 	for _, path := range c.flagConfigs {
-		current, err := server.LoadConfig(path)
+		// don't care about HCL duplicate attributes here on reloading
+		// TODO (HCL_DUP_KEYS_DEPRECATION): go back to server.LoadConfig and remove duplicate when deprecation is done
+		current, _, err := server.LoadConfigCheckDuplicate(path)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -2185,7 +2276,7 @@ func (c *ServerCommand) detectRedirect(detect physical.RedirectDetect,
 	}
 
 	// Return the URL string
-	return url.String(), nil
+	return configutil.NormalizeAddr(url.String()), nil
 }
 
 func (c *ServerCommand) Reload(lock *sync.RWMutex, reloadFuncs *map[string][]reloadutil.ReloadFunc, configPath []string, core *vault.Core) error {
@@ -2691,11 +2782,11 @@ func initHaBackend(c *ServerCommand, config *server.Config, coreConfig *vault.Co
 func determineRedirectAddr(c *ServerCommand, coreConfig *vault.CoreConfig, config *server.Config) error {
 	var retErr error
 	if envRA := os.Getenv("VAULT_API_ADDR"); envRA != "" {
-		coreConfig.RedirectAddr = envRA
+		coreConfig.RedirectAddr = configutil.NormalizeAddr(envRA)
 	} else if envRA := os.Getenv("VAULT_REDIRECT_ADDR"); envRA != "" {
-		coreConfig.RedirectAddr = envRA
+		coreConfig.RedirectAddr = configutil.NormalizeAddr(envRA)
 	} else if envAA := os.Getenv("VAULT_ADVERTISE_ADDR"); envAA != "" {
-		coreConfig.RedirectAddr = envAA
+		coreConfig.RedirectAddr = configutil.NormalizeAddr(envAA)
 	}
 
 	// Attempt to detect the redirect address, if possible
@@ -2727,7 +2818,7 @@ func determineRedirectAddr(c *ServerCommand, coreConfig *vault.CoreConfig, confi
 		if c.flagDevTLS {
 			protocol = "https"
 		}
-		coreConfig.RedirectAddr = fmt.Sprintf("%s://%s", protocol, config.Listeners[0].Address)
+		coreConfig.RedirectAddr = configutil.NormalizeAddr(fmt.Sprintf("%s://%s", protocol, config.Listeners[0].Address))
 	}
 	return retErr
 }
@@ -2736,7 +2827,7 @@ func findClusterAddress(c *ServerCommand, coreConfig *vault.CoreConfig, config *
 	if disableClustering {
 		coreConfig.ClusterAddr = ""
 	} else if envCA := os.Getenv("VAULT_CLUSTER_ADDR"); envCA != "" {
-		coreConfig.ClusterAddr = envCA
+		coreConfig.ClusterAddr = configutil.NormalizeAddr(envCA)
 	} else {
 		var addrToUse string
 		switch {
@@ -2768,7 +2859,7 @@ func findClusterAddress(c *ServerCommand, coreConfig *vault.CoreConfig, config *
 		u.Host = net.JoinHostPort(host, strconv.Itoa(nPort+1))
 		// Will always be TLS-secured
 		u.Scheme = "https"
-		coreConfig.ClusterAddr = u.String()
+		coreConfig.ClusterAddr = configutil.NormalizeAddr(u.String())
 	}
 
 CLUSTER_SYNTHESIS_COMPLETE:
@@ -2841,6 +2932,7 @@ func createCoreConfig(c *ServerCommand, config *server.Config, backend physical.
 		DisableMlock:                   config.DisableMlock,
 		MaxLeaseTTL:                    config.MaxLeaseTTL,
 		DefaultLeaseTTL:                config.DefaultLeaseTTL,
+		RemoveIrrevocableLeaseAfter:    config.RemoveIrrevocableLeaseAfter,
 		ClusterName:                    config.ClusterName,
 		CacheSize:                      config.CacheSize,
 		PluginDirectory:                config.PluginDirectory,
@@ -2853,6 +2945,7 @@ func createCoreConfig(c *ServerCommand, config *server.Config, backend physical.
 		DisableSealWrap:                config.DisableSealWrap,
 		DisablePerformanceStandby:      config.DisablePerformanceStandby,
 		DisableIndexing:                config.DisableIndexing,
+		AllowAuditLogPrefixing:         config.AllowAuditLogPrefixing,
 		AllLoggers:                     c.allLoggers,
 		BuiltinRegistry:                builtinplugins.Registry,
 		DisableKeyEncodingChecks:       config.DisablePrintableCheck,
@@ -2866,6 +2959,7 @@ func createCoreConfig(c *ServerCommand, config *server.Config, backend physical.
 		DisableSSCTokens:               config.DisableSSCTokens,
 		Experiments:                    config.Experiments,
 		AdministrativeNamespacePath:    config.AdministrativeNamespacePath,
+		ObservationSystemConfig:        config.Observations,
 	}
 
 	if c.flagDev {
@@ -3040,10 +3134,6 @@ func startHttpServers(c *ServerCommand, core *vault.Core, config *server.Config,
 	for _, ln := range lns {
 		if ln.Config == nil {
 			return fmt.Errorf("found nil listener config after parsing")
-		}
-
-		if err := config2.IsValidListener(ln.Config); err != nil {
-			return err
 		}
 
 		handler := vaulthttp.Handler.Handler(&vault.HandlerProperties{

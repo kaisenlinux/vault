@@ -12,6 +12,8 @@ import { dasherize } from 'vault/helpers/dasherize';
 import { assert } from '@ember/debug';
 import { addToArray } from 'vault/helpers/add-to-array';
 import { removeFromArray } from 'vault/helpers/remove-from-array';
+import { isEmpty } from '@ember/utils';
+import { get } from '@ember/object';
 
 /**
  * @module FormField
@@ -43,7 +45,6 @@ import { removeFromArray } from 'vault/helpers/remove-from-array';
  * @param {Model} model - Ember Data model that `attr` is defined on
  * @param {boolean} [disabled=false] - whether the field is disabled
  * @param {boolean} [showHelpText=true] - whether to show the tooltip with help text from OpenAPI
- * @param {string} [subText] - text to be displayed below the label
  * @param {string} [mode] - used when editType is 'kv'
  * @param {object} [modelValidations] - Object of errors.  If attr.name is in object and has error message display in AlertInline.
  * @param {function} [onChange] - called whenever a value on the model changes via the component
@@ -64,8 +65,12 @@ export default class FormFieldComponent extends Component {
     'searchSelect',
     'stringArray',
     'ttl',
+    'toggleButton',
   ];
-  @tracked showInput = false;
+  @tracked showToggleTextInput = false;
+  @tracked toggleInputEnabled = false;
+
+  radioValue = (item) => (isEmpty(item.value) ? item : item.value);
 
   constructor() {
     super(...arguments);
@@ -75,13 +80,45 @@ export default class FormFieldComponent extends Component {
       'Form is attempting to modify an ID. Ember-data does not allow this.',
       valuePath.toLowerCase() !== 'id'
     );
-    const modelValue = model[valuePath];
-    this.showInput = !!modelValue;
+    const modelValue = get(model, valuePath);
+    this.showToggleTextInput = !!modelValue;
+    this.toggleInputEnabled = !!modelValue;
+  }
+
+  // ---------------------------------------------------------------
+  // IMPORTANT:
+  // this controls the top-level logic in the associated template
+  // to decide which type of form field to render (Vault or HDS)
+  // ---------------------------------------------------------------
+  //
+  get isHdsFormField() {
+    const { type, options } = this.args.attr;
+
+    // here we replicate the logic in the template, to make sure we don't change the order in which the "ifs" are evaluated
+    if (options?.possibleValues?.length > 0) {
+      return true;
+    } else {
+      if (type === 'number' || type === 'string') {
+        if (options?.editType === 'password') {
+          return true;
+        } else {
+          return false;
+        }
+      } else {
+        // we leave these fields as they are (for now)
+        return false;
+      }
+    }
   }
 
   get hasRadioSubText() {
-    // for 'radio' editType, check to see if every of the possibleValues has a subText and label
+    // for 'radio' editType, check to see if any of the possibleValues has a subText
     return this.args?.attr?.options?.possibleValues?.any((v) => v.subText);
+  }
+
+  get hasRadioHelpText() {
+    // for 'radio' editType, check to see if any of the possibleValues has a helpText
+    return this.args?.attr?.options?.possibleValues?.any((v) => v.helpText);
   }
 
   get hideLabel() {
@@ -96,12 +133,15 @@ export default class FormFieldComponent extends Component {
   get disabled() {
     return this.args.disabled || false;
   }
-  get showHelpText() {
-    return this.args.showHelpText === false ? false : true;
+
+  get helpTextString() {
+    const helpText = this.args.attr?.options?.helpText;
+    if (this.args.showHelpText !== false && helpText) {
+      return helpText;
+    }
+    return '';
   }
-  get subText() {
-    return this.args.subText || '';
-  }
+
   // used in the label element next to the form element
   get labelString() {
     const label = this.args.attr.options?.label || '';
@@ -113,19 +153,23 @@ export default class FormFieldComponent extends Component {
     }
     return '';
   }
+
   // both the path to mutate on the model, and the path to read the value from
   get valuePath() {
     return this.args.attr.options?.fieldValue || this.args.attr.name;
   }
+
   get isReadOnly() {
     const readonly = this.args.attr.options?.readOnly || false;
     return readonly && this.args.mode === 'edit';
   }
+
   get validationError() {
     const validations = this.args.modelValidations || {};
     const state = validations[this.valuePath];
     return state && !state.isValid ? state.errors.join(' ') : null;
   }
+
   get validationWarning() {
     const validations = this.args.modelValidations || {};
     const state = validations[this.valuePath];
@@ -156,6 +200,22 @@ export default class FormFieldComponent extends Component {
     this.setAndBroadcast(valueToSet);
   }
   @action
+  setAndBroadcastChecklist(event) {
+    let updatedValue = this.args.model[this.valuePath];
+    if (event.target.checked) {
+      updatedValue = addToArray(updatedValue, event.target.value);
+    } else {
+      updatedValue = removeFromArray(updatedValue, event.target.value);
+    }
+    this.setAndBroadcast(updatedValue);
+  }
+  @action
+  setAndBroadcastRadio(item) {
+    // we want to read the original value instead of `event.target.value` so we have `false` (boolean) and not `"false"` (string)
+    const valueToSet = this.radioValue(item);
+    this.setAndBroadcast(valueToSet);
+  }
+  @action
   setAndBroadcastTtl(value) {
     const alwaysSendValue = this.valuePath === 'expiry' || this.valuePath === 'safetyBuffer';
     const attrOptions = this.args.attr.options || {};
@@ -179,12 +239,17 @@ export default class FormFieldComponent extends Component {
     }
   }
   @action
-  toggleShow() {
-    const value = !this.showInput;
-    this.showInput = value;
+  toggleTextShow() {
+    const value = !this.showToggleTextInput;
+    this.showToggleTextInput = value;
     if (!value) {
       this.setAndBroadcast(null);
     }
+  }
+  @action
+  toggleButton() {
+    this.toggleInputEnabled = !this.toggleInputEnabled;
+    this.setAndBroadcast(this.toggleInputEnabled);
   }
   @action
   handleKeyUp(maybeEvent) {
@@ -198,16 +263,5 @@ export default class FormFieldComponent extends Component {
   onChangeWithEvent(event) {
     const prop = event.target.type === 'checkbox' ? 'checked' : 'value';
     this.setAndBroadcast(event.target[prop]);
-  }
-
-  @action
-  handleChecklist(event) {
-    let updatedValue = this.args.model[this.valuePath];
-    if (event.target.checked) {
-      updatedValue = addToArray(updatedValue, event.target.value);
-    } else {
-      updatedValue = removeFromArray(updatedValue, event.target.value);
-    }
-    this.setAndBroadcast(updatedValue);
   }
 }

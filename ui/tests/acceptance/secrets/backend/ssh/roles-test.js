@@ -17,7 +17,7 @@ import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { v4 as uuidv4 } from 'uuid';
 
-import authPage from 'vault/tests/pages/auth';
+import { login } from 'vault/tests/helpers/auth/auth-helpers';
 import enablePage from 'vault/tests/pages/settings/mount-secret-backend';
 import listPage from 'vault/tests/pages/secrets/backend/list';
 import editPage from 'vault/tests/pages/secrets/backend/ssh/edit-role';
@@ -35,7 +35,7 @@ module('Acceptance | ssh | roles', function (hooks) {
 
   hooks.beforeEach(function () {
     this.uid = uuidv4();
-    return authPage.login();
+    return login();
   });
 
   const PUB_KEY = `ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCn9p5dHNr4aU4R2W7ln+efzO5N2Cdv/SXk6zbCcvhWcblWMjkXf802B0PbKvf6cJIzM/Xalb3qz1cK+UUjCSEAQWefk6YmfzbOikfc5EHaSKUqDdE+HlsGPvl42rjCr28qYfuYh031YfwEQGEAIEypo7OyAj+38NLbHAQxDxuaReee1YCOV5rqWGtEgl2VtP5kG+QEBza4ZfeglS85f/GGTvZC4Jq1GX+wgmFxIPnd6/mUXa4ecoR0QMfOAzzvPm4ajcNCQORfHLQKAcmiBYMiyQJoU+fYpi9CJGT1jWTmR99yBkrSg6yitI2qqXyrpwAbhNGrM0Fw0WpWxh66N9Xp meirish@Macintosh-3.local`;
@@ -72,12 +72,10 @@ module('Acceptance | ssh | roles', function (hooks) {
           `/vault/secrets/${sshPath}/sign/${this.name}`,
           'ca sign url is correct'
         );
-        assert.dom('[data-test-row-label="Signed key"]').exists({ count: 1 }, 'renders the signed key');
-        assert
-          .dom('[data-test-row-value="Signed key"]')
-          .exists({ count: 1 }, "renders the signed key's value");
-        assert.dom('[data-test-row-label="Serial number"]').exists({ count: 1 }, 'renders the serial');
-        assert.dom('[data-test-row-value="Serial number"]').exists({ count: 1 }, 'renders the serial value');
+        assert.dom(GENERAL.infoRowLabel('Signed key')).exists({ count: 1 }, 'renders the signed key');
+        assert.dom(GENERAL.infoRowValue('Signed key')).exists("renders the signed key's value");
+        assert.dom(GENERAL.infoRowLabel('Serial number')).exists({ count: 1 }, 'renders the serial');
+        assert.dom(GENERAL.infoRowValue('Serial number')).exists('renders the serial value');
       },
     },
     {
@@ -102,10 +100,11 @@ module('Acceptance | ssh | roles', function (hooks) {
         assert.dom(GENERAL.infoRowLabel('Key')).exists({ count: 1 }, 'renders the key');
         assert.dom('[data-test-masked-input]').exists({ count: 1 }, 'renders mask for key value');
         assert.dom(GENERAL.infoRowLabel('Port')).exists({ count: 1 }, 'renders the port');
-        assert.dom('[data-test-row-value="Port"]').exists({ count: 1 }, "renders the port's value");
+        assert.dom(GENERAL.infoRowValue('Port')).exists("renders the port's value");
       },
     },
   ];
+
   test('it creates roles, generates keys and deletes roles', async function (assert) {
     assert.expect(28);
     const sshPath = `ssh-${this.uid}`;
@@ -119,7 +118,7 @@ module('Acceptance | ssh | roles', function (hooks) {
     await click(GENERAL.tab(sshPath));
     for (const role of ROLES) {
       // create a role
-      await click(SES.createSecret);
+      await click(SES.createSecretLink);
       assert.dom(SES.secretHeader).includesText('SSH Role', `${role.type}: renders the create page`);
 
       await fillIn(GENERAL.inputByAttr('name'), role.name);
@@ -150,8 +149,7 @@ module('Acceptance | ssh | roles', function (hooks) {
       await settled(); // eslint-disable-line
       role.assertAfterGenerate(assert, sshPath);
 
-      // click the "Back" button
-      await click(SES.backButton);
+      await click(GENERAL.backButton);
       assert.dom('[data-test-secret-generate-form]').exists(`${role.type}: back takes you back to the form`);
 
       await click(GENERAL.cancelButton);
@@ -175,13 +173,22 @@ module('Acceptance | ssh | roles', function (hooks) {
     await runCmd(`delete sys/mounts/${sshPath}`);
   });
   module('Acceptance | ssh | otp role', function () {
+    const createOTPRole = async (name) => {
+      await fillIn(GENERAL.inputByAttr('name'), name);
+      await fillIn(GENERAL.inputByAttr('keyType'), name);
+      await click(GENERAL.toggleGroup('Options'));
+      await fillIn(GENERAL.inputByAttr('keyType'), 'otp');
+      await fillIn(GENERAL.inputByAttr('defaultUser'), 'admin');
+      await fillIn(GENERAL.inputByAttr('cidrList'), '0.0.0.0/0');
+      await click(SES.ssh.createRole);
+    };
     test('it deletes a role from list view', async function (assert) {
       assert.expect(2);
       const path = `ssh-${this.uid}`;
       await enablePage.enable('ssh', path);
       await settled();
       await editPage.visitRoot({ backend: path });
-      await editPage.createOTPRole('role');
+      await createOTPRole('role');
       await settled();
       await showPage.visit({ backend: path, id: 'role' });
       await settled();
@@ -203,7 +210,7 @@ module('Acceptance | ssh | roles', function (hooks) {
       await enablePage.enable('ssh', path);
       await settled();
       await editPage.visitRoot({ backend: path });
-      await editPage.createOTPRole('role');
+      await createOTPRole('role');
       await settled();
       assert.strictEqual(
         currentRouteName(),
@@ -222,11 +229,11 @@ module('Acceptance | ssh | roles', function (hooks) {
         'navs to the credentials page'
       );
 
-      await generatePage.generateOTP();
-      await settled();
+      await fillIn(GENERAL.inputByAttr('username'), 'admin');
+      await fillIn(GENERAL.inputByAttr('ip'), '192.168.1.1');
+      await click(GENERAL.saveButton);
       assert.ok(generatePage.warningIsPresent, 'shows warning');
-      await generatePage.back();
-      await settled();
+      await click(GENERAL.backButton);
       assert.ok(generatePage.userIsPresent, 'clears generate, shows user input');
       assert.ok(generatePage.ipIsPresent, 'clears generate, shows ip input');
       // cleanup

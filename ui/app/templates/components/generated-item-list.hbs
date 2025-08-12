@@ -1,7 +1,7 @@
 {{!
   Copyright (c) HashiCorp, Inc.
   SPDX-License-Identifier: BUSL-1.1
-~}}
+}}
 
 <PageHeader as |p|>
   <p.top>
@@ -23,7 +23,7 @@
         <ul>
           {{#each tabs as |tab|}}
             <li>
-              <LinkTo @route={{tab.route}} @models={{tab.routeParams}} data-test-auth-section-tab>
+              <LinkTo @route={{tab.route}} @models={{tab.routeParams}} data-test-link-to="generated-tab">
                 {{tab.label}}
               </LinkTo>
             </li>
@@ -79,20 +79,17 @@
             data-test-popup-menu-trigger
           />
           <dd.Interactive
-            @text="View {{singularize @itemType}}"
             @route="vault.cluster.access.method.item.show"
             @models={{array @methodModel.id @itemType list.item.id}}
-          />
+          >View {{singularize @itemType}}</dd.Interactive>
           <dd.Interactive
-            @text="Edit {{singularize @itemType}}"
             @route="vault.cluster.access.method.item.edit"
             @models={{array @methodModel.id @itemType list.item.id}}
-          />
-          <dd.Interactive
-            @text="Delete {{singularize @itemType}}"
-            @color="critical"
-            {{on "click" (fn (mut this.itemToDelete) list.item)}}
-          />
+          >Edit {{singularize @itemType}}</dd.Interactive>
+          <dd.Interactive @color="critical" {{on "click" (fn (mut this.itemToDelete) list.item)}}>
+            Delete
+            {{singularize @itemType}}
+          </dd.Interactive>
         </Hds::Dropdown>
       </Item.menu>
       {{#if (eq list.item this.itemToDelete)}}

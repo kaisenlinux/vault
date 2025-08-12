@@ -1,13 +1,6 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: BUSL-1.1
 
-variable "artifactory_username" {
-  type        = string
-  description = "The username to use when testing an artifact from artifactory"
-  default     = null
-  sensitive   = true
-}
-
 variable "artifactory_token" {
   type        = string
   description = "The token to use when authenticating to artifactory"
@@ -90,7 +83,7 @@ variable "distro_version_leap" {
 variable "distro_version_rhel" {
   description = "The version of RHEL to use"
   type        = string
-  default     = "9.4" // or "8.10"
+  default     = "9.5" // or "8.10"
 }
 
 variable "distro_version_sles" {
@@ -204,6 +197,12 @@ variable "vault_upgrade_initial_version" {
   description = "The Vault release to deploy before upgrading"
   type        = string
   default     = "1.13.13"
+}
+
+variable "verify_aws_secrets_engine" {
+  description = "If true we'll verify AWS secrets engines behavior. Because of user creation restrictions in Doormat AWS accounts, only turn this on for CI, as it depends on resources that exist only in those accounts"
+  type        = bool
+  default     = false
 }
 
 variable "verify_log_secrets" {

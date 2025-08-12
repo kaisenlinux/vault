@@ -17,12 +17,13 @@ import {
 } from '@ember/test-helpers';
 import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
-import authPage from 'vault/tests/pages/auth';
+import { login } from 'vault/tests/helpers/auth/auth-helpers';
 import { pollCluster } from 'vault/tests/helpers/poll-cluster';
 import { create } from 'ember-cli-page-object';
 import flashMessage from 'vault/tests/pages/components/flash-message';
 import ss from 'vault/tests/pages/components/search-select';
 import { disableReplication } from 'vault/tests/helpers/replication';
+import { GENERAL } from '../helpers/general-selectors';
 const searchSelect = create(ss);
 const flash = create(flashMessage);
 
@@ -30,7 +31,7 @@ module('Acceptance | Enterprise | replication', function (hooks) {
   setupApplicationTest(hooks);
 
   hooks.beforeEach(async function () {
-    await authPage.login();
+    await login();
     await settled();
     await disableReplication('dr');
     await settled();
@@ -109,7 +110,7 @@ module('Acceptance | Enterprise | replication', function (hooks) {
     assert.dom('[data-test-mount-config-mode]').includesText(mode, 'show page renders the correct mode');
     assert
       .dom('[data-test-mount-config-paths]')
-      .includesText(`${mountPath}/`, 'show page renders the correct mount path');
+      .hasTextContaining(`${mountPath}`, 'show page renders the correct mount path');
 
     // delete config by choosing "no filter" in the edit screen
     await click('[data-test-replication-link="edit-mount-config"]');
@@ -272,7 +273,7 @@ module('Acceptance | Enterprise | replication', function (hooks) {
     await click('[data-test-secondary-add]');
 
     await fillIn('[data-test-replication-secondary-id]', secondaryNameSecond);
-    await click('[data-test-toggle-input]');
+    await click(GENERAL.toggleInput('Time to Live (TTL) for generated secondary token'));
 
     await fillIn('[data-test-ttl-value]', 3);
     await click('[data-test-secondary-add]');

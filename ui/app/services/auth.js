@@ -29,6 +29,7 @@ export default Service.extend({
   permissions: service(),
   currentCluster: service(),
   router: service(),
+  store: service(),
   namespaceService: service('namespace'),
 
   IDLE_TIMEOUT: 3 * 60e3,
@@ -210,6 +211,12 @@ export default Service.extend({
     return this.ajax(url, 'POST', { namespace });
   },
 
+  async lookupSelf(token) {
+    return this.store
+      .adapterFor('application')
+      .ajax('/v1/auth/token/lookup-self', 'GET', { headers: { 'X-Vault-Token': token } });
+  },
+
   revokeCurrentToken() {
     const namespace = this.authData.userRootNamespace;
     const url = '/v1/auth/token/revoke-self';
@@ -239,15 +246,14 @@ export default Service.extend({
     // haven't set a value yet
     // all of the typeof checks are necessary because the root namespace is ''
     let userRootNamespace = namespace_path && namespace_path.replace(/\/$/, '');
-    // if we're logging in with token and there's no namespace_path, we can assume
+    // renew-self does not return namespace_path, so we manually setting in renew().
+    // so if we're logging in with token and there's no namespace_path, we can assume
     // that the token belongs to the root namespace
     if (backend === 'token' && !userRootNamespace) {
       userRootNamespace = '';
     }
-    if (typeof userRootNamespace === 'undefined') {
-      if (this.authData) {
-        userRootNamespace = this.authData.userRootNamespace;
-      }
+    if (typeof userRootNamespace === 'undefined' && this.authData) {
+      userRootNamespace = this.authData.userRootNamespace;
     }
     if (typeof userRootNamespace === 'undefined') {
       userRootNamespace = currentNamespace;
@@ -255,38 +261,44 @@ export default Service.extend({
     return userRootNamespace;
   },
 
-  persistAuthData() {
+  // TODO CMB changes below are stopgaps until this method is un-abstracted
+  // end goal is for each auth method's component to handle setting relevant parameters.
+  // this method should just accept an arg of data to persist from the response as well as:
+  // 1. generate token name and set token data
+  // 2. calculate and set expiration
+  // 3. (maybe) calculate root namespace
+  async persistAuthData() {
     const [firstArg, resp] = arguments;
     const currentNamespace = this.namespaceService.path || '';
     // dropdown vs tab format
-    const mountPath = firstArg?.data?.path || firstArg?.selectedAuth;
+    //
+    // TODO adding ANOTHER conditional until this method is un-abstracted :(
+    const mountPath = firstArg?.path || firstArg?.data?.path || firstArg?.selectedAuth;
     let tokenName;
     let options;
     let backend;
+
+    // TODO move setting current backend, options, etc to method's component
     if (typeof firstArg === 'string') {
       tokenName = firstArg;
       backend = this.backendFromTokenName(tokenName);
     } else {
       options = firstArg;
-      backend = options.backend;
+      // backend is old news since it's confusing whether it refers to the auth mount path or auth type,
+      // new auth flow explicitly defines "selectedAuth" and "path"
+      backend = options?.backend || options.selectedAuth;
     }
 
     const currentBackend = {
       mountPath,
       ...BACKENDS.find((b) => b.type === backend),
     };
-    let displayName;
-    if (isArray(currentBackend.displayNamePath)) {
-      displayName = currentBackend.displayNamePath.map((name) => get(resp, name)).join('/');
-    } else {
-      displayName = get(resp, currentBackend.displayNamePath);
-    }
 
     const { entity_id, policies, renewable, namespace_path } = resp;
     const userRootNamespace = this.calculateRootNamespace(currentNamespace, namespace_path, backend);
     const data = {
       userRootNamespace,
-      displayName,
+      displayName: null, // set below
       backend: currentBackend,
       token: resp.client_token || get(resp, currentBackend.tokenPath),
       policies,
@@ -311,9 +323,7 @@ export default Service.extend({
     // this is intentionally not included in setExpirationSettings so we can unit test that method
     if (Ember.testing) this.set('allowExpiration', false);
 
-    if (!data.displayName) {
-      data.displayName = (this.getTokenData(tokenName) || {}).displayName;
-    }
+    data.displayName = await this.setDisplayName(resp, currentBackend.displayNamePath, tokenName);
 
     this.set('tokens', addToArray(this.tokens, tokenName));
     this.setTokenData(tokenName, data);
@@ -323,6 +333,34 @@ export default Service.extend({
       token: tokenName,
       isRoot: policies.includes('root'),
     });
+  },
+
+  async setDisplayName(resp, displayNamePath, tokenName) {
+    let displayName;
+
+    // first check if auth response includes a display name
+    displayName = isArray(displayNamePath)
+      ? displayNamePath.map((name) => get(resp, name)).join('/')
+      : get(resp, displayNamePath);
+
+    // if not, check stored token data
+    if (!displayName) {
+      displayName = (this.getTokenData(tokenName) || {}).displayName;
+    }
+
+    // this is a workaround for OIDC/SAML methods WITH mfa configured. at this time mfa/validate endpoint does not
+    // return display_name (or metadata that includes it) for this auth combination.
+    // this if block can be removed if/when the API returns display_name on the mfa/validate response.
+    if (!displayName) {
+      // if still nothing, request token data as a last resort
+      try {
+        const { data } = await this.lookupSelf(resp.client_token);
+        displayName = data.display_name;
+      } catch {
+        // silently fail since we're just trying to set a display name
+      }
+    }
+    return displayName;
   },
 
   setTokenData(token, data) {
@@ -347,7 +385,13 @@ export default Service.extend({
     return this.renewCurrentToken().then(
       (resp) => {
         this.isRenewing = false;
-        return this.persistAuthData(tokenName, resp.data || resp.auth);
+        const namespacePath = this.namespaceService.path;
+        const response = resp.data || resp.auth;
+        // renew-self does not return namespace_path, so manually add it if it exists
+        if (!response?.namespace_path && namespacePath) {
+          response.namespace_path = namespacePath;
+        }
+        return this.persistAuthData(tokenName, response);
       },
       (e) => {
         this.isRenewing = false;

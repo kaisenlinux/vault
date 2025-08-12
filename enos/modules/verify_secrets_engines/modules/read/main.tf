@@ -22,9 +22,21 @@ variable "create_state" {
   description = "The state of the secrets engines from the 'create' module"
 }
 
+variable "ip_version" {
+  type        = string
+  description = "IP Version (4 or 6)"
+  default     = "4"
+
+}
+
 variable "vault_addr" {
   type        = string
   description = "The local vault API listen address"
+}
+
+variable "vault_edition" {
+  type        = string
+  description = "The Vault product edition"
 }
 
 variable "vault_install_dir" {
@@ -36,6 +48,30 @@ variable "vault_root_token" {
   type        = string
   description = "The Vault root token"
   default     = null
+}
+
+variable "verify_aws_secrets_engine" {
+  type        = bool
+  description = <<-EOF
+    Whether or not we'll verify the AWS secrets engine. Due to the various security requirements in
+    Doormat managed AWS accounts, our implementation of the verification requires us to use a
+    an external 'DemoUser' role and associated policy in order to create additional users. This is
+    configured in vault_ci and vault_enterprise_ci but does not exist in all AWS accounts. As such,
+    it's disabled by default.
+    See: https://github.com/hashicorp/honeybee-templates/blob/main/templates/iam_policy/DemoUser.yaml
+  EOF
+  default     = false
+}
+
+variable "verify_aws_engine_creds" {
+  type    = bool
+  default = true
+}
+
+variable "verify_pki_certs" {
+  type        = bool
+  description = "Flag to verify pki certificates"
+  default     = true
 }
 
 locals {

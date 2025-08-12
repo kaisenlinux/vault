@@ -93,7 +93,7 @@ resource "enos_remote_exec" "identity_group_kv_writers" {
     VAULT_INSTALL_DIR = var.vault_install_dir
   }
 
-  scripts = [abspath("${path.module}/../../scripts/write-payload.sh")]
+  scripts = [abspath("${path.module}/../../scripts/write.sh")]
 
   transport = {
     ssh = {
@@ -106,6 +106,8 @@ resource "enos_remote_exec" "identity_group_kv_writers" {
 resource "enos_remote_exec" "kv_put_secret_test" {
   depends_on = [
     enos_remote_exec.secrets_enable_kv_secret,
+    enos_remote_exec.policy_write_kv_writer,
+    enos_remote_exec.identity_group_kv_writers
   ]
   for_each = var.hosts
 

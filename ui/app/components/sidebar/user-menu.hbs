@@ -1,7 +1,7 @@
 {{!
   Copyright (c) HashiCorp, Inc.
   SPDX-License-Identifier: BUSL-1.1
-~}}
+}}
 
 <BasicDropdown
   @horizontalPosition="right"
@@ -11,8 +11,8 @@
   data-test-user-menu
   as |Dropdown|
 >
-  <Dropdown.Trigger data-test-user-menu-trigger>
-    <Hds::SideNav::Header::IconButton @icon="user" @ariaLabel="User menu" />
+  <Dropdown.Trigger data-test-button="user-menu-trigger">
+    <Hds::Button @isIconOnly={{true}} @size="large" @icon="user" @text="User menu" />
   </Dropdown.Trigger>
   <Dropdown.Content>
     <div class="popup-menu-content" data-test-user-menu-content>

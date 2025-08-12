@@ -1,7 +1,7 @@
 {{!
   Copyright (c) HashiCorp, Inc.
   SPDX-License-Identifier: BUSL-1.1
-~}}
+}}
 
 <div class="tabs-container box is-sideless is-fullwidth is-paddingless is-marginless">
   <nav class="tabs" aria-label="navigation to manage transit backend">
@@ -63,7 +63,7 @@
         />
       {{/if}}
       {{#if (eq @mode "show")}}
-        {{#if (or @capabilities.canUpdate @capabilities.canDelete)}}
+        {{#if (or @model.canUpdate @model.canDelete)}}
           <ToolbarSecretLink @secret={{@key.id}} @backend={{@key.backend}} @mode="edit" replace={{true}}>
             Edit key
           </ToolbarSecretLink>

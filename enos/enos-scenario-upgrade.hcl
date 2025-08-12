@@ -5,18 +5,39 @@ scenario "upgrade" {
   description = <<-EOF
     The upgrade scenario verifies in-place upgrades between previously released versions of Vault
     against another candidate build. The build can be a local branch, any CRT built Vault artifact
-    saved to the local machine, or any CRT built Vault artifact in the stable channel in
-    Artifactory.
+    saved to the local machine, or any CRT built Vault artifact in the stable channel in Artifactory.
 
-    The scenario will first create a new Vault Cluster with a previously released version of Vault,
-    mount engines and create data, then perform an in-place upgrade with any candidate built and
-    perform quality verification.
+    The scenario creates a new Vault cluster with a previously released version of Vault. It then
+    mounts engines, creates data, and performs an in-place upgrade with any candidate built. Finally,
+    it performs quality verification.
 
-    If you want to use the 'distro:leap' variant you must first accept SUSE's terms for the AWS
-    account. To verify that your account has agreed, sign-in to your AWS through Doormat,
-    and visit the following links to verify your subscription or subscribe:
-      arm64 AMI: https://aws.amazon.com/marketplace/server/procurement?productId=a516e959-df54-4035-bb1a-63599b7a6df9
-      amd64 AMI: https://aws.amazon.com/marketplace/server/procurement?productId=5535c495-72d4-4355-b169-54ffa874f849
+    # How to run this scenario
+
+    For general instructions on running a scenario, refer to the Enos docs: https://eng-handbook.hashicorp.services/internal-tools/enos/running-a-scenario/
+    For troubleshooting tips and common errors, see https://eng-handbook.hashicorp.services/internal-tools/enos/troubleshooting/.
+
+    Variables required for all scenario variants:
+      - aws_ssh_private_key_path (more info about AWS SSH keypairs: https://eng-handbook.hashicorp.services/internal-tools/enos/getting-started/#set-your-aws-key-pair-name-and-private-key)
+      - aws_ssh_keypair_name
+      - vault_build_date*
+      - vault_product_version
+      - vault_revision*
+
+    * If you don't already know what build date and revision you should be using, see
+    https://eng-handbook.hashicorp.services/internal-tools/enos/troubleshooting/#execution-error-expected-vs-got-for-vault-versioneditionrevisionbuild-date.
+
+    Variables required for some scenario variants:
+      - artifactory_token (if using `artifact_source:artifactory` in your filter)
+      - aws_region (if different from the default value in enos-variables.hcl)
+      - consul_license_path (if using an ENT edition of Consul)
+      - distro_version_<distro> (if different from the default version for your target
+      distro. See supported distros and default versions in the distro_version_<distro>
+      definitions in enos-variables.hcl)
+      - vault_artifact_path (the path to where you have a Vault artifact already downloaded,
+      if using `artifact_source:crt` in your filter)
+      - vault_license_path (if using an ENT edition of Vault)
+      - vault_upgrade_initial_version (if the version you want to start with differs
+      from the default value defined in enos-variables.hcl)
   EOF
 
   matrix {
@@ -42,7 +63,7 @@ scenario "upgrade" {
     // versions after our initial publication of these editions for arm64.
     exclude {
       arch    = ["arm64"]
-      edition = ["ent.fips1402", "ent.hsm", "ent.hsm.fips1402"]
+      edition = ["ent.fips1403", "ent.hsm", "ent.hsm.fips1403"]
     }
 
     // PKCS#11 can only be used with hsm editions
@@ -89,20 +110,19 @@ scenario "upgrade" {
     module      = "build_${matrix.artifact_source}"
 
     variables {
-      build_tags           = var.vault_local_build_tags != null ? var.vault_local_build_tags : global.build_tags[matrix.edition]
-      artifact_path        = local.artifact_path
-      goarch               = matrix.arch
-      goos                 = "linux"
-      artifactory_host     = matrix.artifact_source == "artifactory" ? var.artifactory_host : null
-      artifactory_repo     = matrix.artifact_source == "artifactory" ? var.artifactory_repo : null
-      artifactory_username = matrix.artifact_source == "artifactory" ? var.artifactory_username : null
-      artifactory_token    = matrix.artifact_source == "artifactory" ? var.artifactory_token : null
-      arch                 = matrix.artifact_source == "artifactory" ? matrix.arch : null
-      product_version      = var.vault_product_version
-      artifact_type        = matrix.artifact_type
-      distro               = matrix.artifact_source == "artifactory" ? matrix.distro : null
-      edition              = matrix.artifact_source == "artifactory" ? matrix.edition : null
-      revision             = var.vault_revision
+      build_tags        = var.vault_local_build_tags != null ? var.vault_local_build_tags : global.build_tags[matrix.edition]
+      artifact_path     = local.artifact_path
+      goarch            = matrix.arch
+      goos              = "linux"
+      artifactory_host  = matrix.artifact_source == "artifactory" ? var.artifactory_host : null
+      artifactory_repo  = matrix.artifact_source == "artifactory" ? var.artifactory_repo : null
+      artifactory_token = matrix.artifact_source == "artifactory" ? var.artifactory_token : null
+      arch              = matrix.artifact_source == "artifactory" ? matrix.arch : null
+      product_version   = var.vault_product_version
+      artifact_type     = matrix.artifact_type
+      distro            = matrix.artifact_source == "artifactory" ? matrix.distro : null
+      edition           = matrix.artifact_source == "artifactory" ? matrix.edition : null
+      revision          = var.vault_revision
     }
   }
 
@@ -158,6 +178,23 @@ scenario "upgrade" {
     }
   }
 
+  step "create_external_integration_target" {
+    description = global.description.create_external_integration_target
+    module      = module.target_ec2_instances
+    depends_on  = [step.create_vpc]
+
+    providers = {
+      enos = local.enos_provider["ubuntu"]
+    }
+
+    variables {
+      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"]["24.04"]
+      cluster_tag_key = global.vault_tag_key
+      common_tags     = global.tags
+      vpc_id          = step.create_vpc.id
+    }
+  }
+
   step "create_vault_cluster_targets" {
     description = global.description.create_vault_cluster_targets
     module      = module.target_ec2_instances
@@ -194,11 +231,31 @@ scenario "upgrade" {
     }
   }
 
+  step "set_up_external_integration_target" {
+    description = global.description.set_up_external_integration_target
+    module      = module.set_up_external_integration_target
+    depends_on = [
+      step.create_external_integration_target
+    ]
+
+    providers = {
+      enos = local.enos_provider["ubuntu"]
+    }
+
+    variables {
+      hosts      = step.create_external_integration_target.hosts
+      ip_version = matrix.ip_version
+      packages   = concat(global.packages, global.distro_packages["ubuntu"]["24.04"], ["podman", "podman-docker"])
+      ports      = global.integration_host_ports
+    }
+  }
+
   step "create_backend_cluster" {
     description = global.description.create_backend_cluster
     module      = "backend_${matrix.backend}"
     depends_on = [
       step.create_vault_cluster_backend_targets,
+      step.set_up_external_integration_target
     ]
 
     providers = {
@@ -299,7 +356,14 @@ scenario "upgrade" {
       manage_service       = true # always handle systemd for released bundles
       packages             = concat(global.packages, global.distro_packages[matrix.distro][global.distro_version[matrix.distro]])
       release = {
-        edition = matrix.edition
+        edition = strcontains(matrix.edition, "fips1403") ? (
+          // Our eventual constraint will need to factor in each release branch that is mixed, e.g.
+          // semverconstraint(var.vault_upgrade_initial_version, "<=1.19.4-0,>=1.19.0-0 || <=1.18.10-0,>=1.18.0-0 || <=1.17.17-0,>=1.17.0-0 || <=1.16.21-0")
+          // But for now we've only got to consider before and after 1.19.4
+          semverconstraint(var.vault_upgrade_initial_version, "<1.19.4-0")
+          ? replace(matrix.edition, "fips1403", "fips1402")
+          : matrix.edition
+        ) : matrix.edition
         version = var.vault_upgrade_initial_version
       }
       seal_attributes = step.create_seal_key.attributes
@@ -370,7 +434,7 @@ scenario "upgrade" {
     module      = module.vault_verify_secrets_engines_create
     depends_on = [
       step.create_vault_cluster,
-      step.get_vault_cluster_ips,
+      step.get_vault_cluster_ips
     ]
 
     providers = {
@@ -393,13 +457,19 @@ scenario "upgrade" {
       quality.vault_api_sys_policy_write,
       quality.vault_mount_auth,
       quality.vault_mount_kv,
+      quality.vault_secrets_kmip_write_config,
       quality.vault_secrets_kv_write,
+      quality.vault_secrets_ldap_write_config,
     ]
 
     variables {
-      hosts       = step.create_vault_cluster_targets.hosts
-      leader_host = step.get_vault_cluster_ips.leader_host
-      vault_addr  = step.create_vault_cluster.api_addr_localhost
+      hosts                  = step.create_vault_cluster_targets.hosts
+      ip_version             = matrix.ip_version
+      integration_host_state = step.set_up_external_integration_target.state
+      leader_host            = step.get_vault_cluster_ips.leader_host
+      ports                  = global.integration_host_ports
+      vault_addr             = step.create_vault_cluster.api_addr_localhost
+      vault_edition          = matrix.edition
       // Use the install dir for our initial version, which always comes from a zip bundle
       vault_install_dir = global.vault_install_dir["bundle"]
       vault_root_token  = step.create_vault_cluster.root_token
@@ -644,8 +714,11 @@ scenario "upgrade" {
     variables {
       create_state      = step.verify_secrets_engines_create.state
       hosts             = step.get_updated_vault_cluster_ips.follower_hosts
+      ip_version        = matrix.ip_version
       vault_addr        = step.create_vault_cluster.api_addr_localhost
+      vault_edition     = matrix.edition
       vault_install_dir = global.vault_install_dir[matrix.artifact_type]
+      vault_root_token  = step.create_vault_cluster.root_token
     }
   }
 
@@ -771,6 +844,16 @@ scenario "upgrade" {
     value       = step.create_vault_cluster.audit_device_file_path
   }
 
+  output "external_integration_server_ldap" {
+    description = "The LDAP test servers info"
+    value       = step.set_up_external_integration_target.state.ldap
+  }
+
+  output "integration_host_kmip_state" {
+    description = "The KMIP test servers info"
+    value       = step.set_up_external_integration_target.state.kmip
+  }
+
   output "cluster_name" {
     description = "The Vault cluster name"
     value       = step.create_vault_cluster.cluster_name
@@ -818,6 +901,7 @@ scenario "upgrade" {
 
   output "secrets_engines_state" {
     description = "The state of configured secrets engines"
+    sensitive   = true
     value       = step.verify_secrets_engines_create.state
   }
 

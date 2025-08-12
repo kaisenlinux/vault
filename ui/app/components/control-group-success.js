@@ -6,10 +6,12 @@
 import { service } from '@ember/service';
 import Component from '@ember/component';
 import { task } from 'ember-concurrency';
+import errorMessage from 'vault/utils/error-message';
 
 export default Component.extend({
   router: service(),
   controlGroup: service(),
+  api: service(),
   store: service(),
 
   // public attrs
@@ -21,14 +23,14 @@ export default Component.extend({
   unwrapData: null,
 
   unwrap: task(function* (token) {
-    const adapter = this.store.adapterFor('tools');
     this.set('error', null);
     try {
-      const response = yield adapter.toolAction('unwrap', null, { clientToken: token });
+      const adapter = this.store.adapterFor('application');
+      const response = yield adapter.ajax('/v1/sys/wrapping/unwrap', 'POST', { clientToken: token });
       this.set('unwrapData', response.auth || response.data);
       this.controlGroup.deleteControlGroupToken(this.model.id);
     } catch (e) {
-      this.set('error', `Token unwrap failed: ${e.errors[0]}`);
+      this.error = `Token unwrap failed: ${errorMessage(e)}`;
     }
   }).drop(),
 

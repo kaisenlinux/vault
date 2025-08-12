@@ -1908,9 +1908,9 @@ func (c *Core) validateDuo(ctx context.Context, mfaFactors *MFAFactor, mConfig *
 	case "allow":
 		return nil
 	case "deny":
-		return fmt.Errorf(preauth.Response.Status_Msg)
+		return errors.New(preauth.Response.Status_Msg)
 	case "enroll":
-		return fmt.Errorf(fmt.Sprintf("%q - %q", preauth.Response.Status_Msg, preauth.Response.Enroll_Portal_Url))
+		return fmt.Errorf("%q - %q", preauth.Response.Status_Msg, preauth.Response.Enroll_Portal_Url)
 	case "auth":
 		break
 	default:
@@ -2332,15 +2332,19 @@ func (c *Core) validateTOTP(ctx context.Context, mfaFactors *MFAFactor, entityMe
 		return fmt.Errorf("entity does not contain the TOTP secret")
 	}
 
+	if len(passcode) != int(totpSecret.GetDigits()) {
+		return fmt.Errorf("failed to validate TOTP passcode")
+	}
+
 	usedName := fmt.Sprintf("%s_%s", configID, passcode)
 
 	_, ok := usedCodes.Get(usedName)
 	if ok {
-		return fmt.Errorf("code already used; new code is available in %v seconds", totpSecret.Period)
+		return fmt.Errorf("failed to validate TOTP passcode")
 	}
 
-	// The duration in which a passcode is stored in cache to enforce
-	// rate limit on failed totp passcode validation
+	// The duration in which a rateLimitID (configID_entityID) is used to limit the number of TOTP validation attempts.
+	// The passcode will be added to the usedCodes cache later, with a different TTL, with the skew and period.
 	passcodeTTL := time.Duration(int64(time.Second) * int64(totpSecret.Period))
 
 	// Enforcing rate limit per MethodID per EntityID

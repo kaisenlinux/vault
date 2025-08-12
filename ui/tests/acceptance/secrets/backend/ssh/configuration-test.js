@@ -3,17 +3,18 @@
  * SPDX-License-Identifier: BUSL-1.1
  */
 
-import { click, fillIn, currentURL, visit, waitFor } from '@ember/test-helpers';
+import { click, currentURL, visit, waitFor } from '@ember/test-helpers';
 import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { v4 as uuidv4 } from 'uuid';
 
-import authPage from 'vault/tests/pages/auth';
+import { login } from 'vault/tests/helpers/auth/auth-helpers';
 import enablePage from 'vault/tests/pages/settings/mount-secret-backend';
 import { setupMirage } from 'ember-cli-mirage/test-support';
 import { runCmd } from 'vault/tests/helpers/commands';
 import { GENERAL } from 'vault/tests/helpers/general-selectors';
 import { SECRET_ENGINE_SELECTORS as SES } from 'vault/tests/helpers/secret-engine/secret-engine-selectors';
+import { mountBackend } from 'vault/tests/helpers/components/mount-backend-form-helpers';
 import { configUrl } from 'vault/tests/helpers/secret-engine/secret-engine-helpers';
 import { overrideResponse } from 'vault/tests/helpers/stubs';
 
@@ -24,16 +25,14 @@ module('Acceptance | ssh | configuration', function (hooks) {
   hooks.beforeEach(function () {
     this.store = this.owner.lookup('service:store');
     this.uid = uuidv4();
-    return authPage.login();
+    return login();
   });
 
   test('it should prompt configuration after mounting ssh engine', async function (assert) {
     const sshPath = `ssh-${this.uid}`;
     // in this test go through the full mount process. Bypass this step in later tests.
     await visit('/vault/settings/mount-secret-backend');
-    await click(SES.mountType('ssh'));
-    await fillIn(GENERAL.inputByAttr('path'), sshPath);
-    await click(SES.mountSubmit);
+    await mountBackend('ssh', sshPath);
     await click(SES.configTab);
     assert.dom(GENERAL.emptyStateTitle).hasText('SSH not configured');
     assert.dom(GENERAL.emptyStateActions).hasText('Configure SSH');

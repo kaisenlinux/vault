@@ -8,6 +8,8 @@ locals {
   user_password      = "passtestuser1" # auth/userpass/login/passtestuser1
   user_policy_name   = "reguser"       # sys/policy/reguser
 
+  auth_ldap_path = "ldap" # auth/ldap
+
   // Response data
   user_login_data = jsondecode(enos_remote_exec.auth_login_testuser.stdout)
   sys_auth_data   = jsondecode(enos_remote_exec.read_sys_auth.stdout).data
